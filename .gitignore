@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# FastF1 disk cache
+.fastf1_cache/
+
+# VS Code MCP config (contains absolute local paths)
+.vscode/mcp.json
+
+# Internal planning & reference docs 
+refs/
