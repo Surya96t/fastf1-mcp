@@ -1,16 +1,11 @@
 import asyncio
-import logging
 from contextlib import asynccontextmanager
-from functools import partial
 
 import fastf1
 from fastmcp import FastMCP
 
 from .config import settings
 from .logging_config import setup_logging
-from .session_manager import session_manager
-from .utils.converters import standings_to_json
-from .utils.errors import FastF1MCPError, ErrorCode
 from .tools.lookups import (
     get_schedule,
     get_driver_standings,

@@ -1,6 +1,5 @@
 """Integration tests for SessionManager caching behaviour."""
 
-import asyncio
 import json
 import time
 from unittest.mock import MagicMock, patch

@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 import pandas as pd
