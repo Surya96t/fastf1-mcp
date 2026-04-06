@@ -144,6 +144,7 @@ mcp.prompt(weekend_preview)
 # Entry Point
 # =============================================================================
 
+
 def main():
     """Run the MCP server."""
     mcp.run()

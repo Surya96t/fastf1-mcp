@@ -56,6 +56,7 @@ async def _ergast_to_json(fn, **kwargs) -> str:
 # Resource functions (registered onto `mcp` in server.py via mcp.resource())
 # ---------------------------------------------------------------------------
 
+
 async def schedule_resource(year: int) -> str:
     """
     F1 race calendar for a season.
@@ -102,6 +103,4 @@ async def circuits_resource() -> str:
     country, latitude, and longitude.
     """
     logger.info("resource f1://circuits")
-    return await _ergast_to_json(
-        lambda e, **kw: e.get_circuits(**kw), limit=100
-    )
+    return await _ergast_to_json(lambda e, **kw: e.get_circuits(**kw), limit=100)

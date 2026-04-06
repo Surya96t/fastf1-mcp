@@ -119,13 +119,15 @@ async def list_drivers(
         results = session_obj.results
         drivers = []
         for _, row in results.iterrows():
-            drivers.append({
-                "code": row.get("Abbreviation", ""),
-                "fullName": row.get("FullName", ""),
-                "nationality": row.get("CountryCode", ""),
-                "team": row.get("TeamName", ""),
-                "number": str(row.get("DriverNumber", "")),
-            })
+            drivers.append(
+                {
+                    "code": row.get("Abbreviation", ""),
+                    "fullName": row.get("FullName", ""),
+                    "nationality": row.get("CountryCode", ""),
+                    "team": row.get("TeamName", ""),
+                    "number": str(row.get("DriverNumber", "")),
+                }
+            )
         return drivers
 
     # Season-level: use Ergast
@@ -152,13 +154,15 @@ async def list_drivers(
 
     drivers = []
     for _, row in df.iterrows():
-        drivers.append({
-            "code": row.get("driverCode", ""),
-            "fullName": f"{row.get('givenName', '')} {row.get('familyName', '')}".strip(),
-            "nationality": row.get("driverNationality", ""),
-            "team": "",
-            "number": str(row.get("permanentNumber", "")),
-        })
+        drivers.append(
+            {
+                "code": row.get("driverCode", ""),
+                "fullName": f"{row.get('givenName', '')} {row.get('familyName', '')}".strip(),
+                "nationality": row.get("driverNationality", ""),
+                "team": "",
+                "number": str(row.get("permanentNumber", "")),
+            }
+        )
     return drivers
 
 
@@ -191,11 +195,10 @@ async def get_cache_status() -> dict:
     status = session_manager.get_cache_status()
 
     from ..config import settings
+
     cache_path = settings.fastf1_cache_path
     if cache_path.exists():
-        total_size = sum(
-            f.stat().st_size for f in cache_path.rglob("*") if f.is_file()
-        )
+        total_size = sum(f.stat().st_size for f in cache_path.rglob("*") if f.is_file())
         status["fastf1_cache_path"] = str(cache_path)
         status["fastf1_cache_size_mb"] = round(total_size / (1024 * 1024), 2)
     else:

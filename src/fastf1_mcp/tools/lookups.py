@@ -197,18 +197,20 @@ async def get_race_results_historical(year: int, round_num: int) -> list[dict]:
 
     records = []
     for _, row in df.iterrows():
-        records.append({
-            "position": row.get("position"),
-            "driverCode": row.get("driverCode", ""),
-            "givenName": row.get("givenName", ""),
-            "familyName": row.get("familyName", ""),
-            "constructorName": row.get("constructorName", ""),
-            "grid": row.get("grid"),
-            "laps": row.get("laps"),
-            "status": row.get("status", ""),
-            "points": row.get("points"),
-            "time": str(row["finishingTime"]) if row.get("finishingTime") else None,
-        })
+        records.append(
+            {
+                "position": row.get("position"),
+                "driverCode": row.get("driverCode", ""),
+                "givenName": row.get("givenName", ""),
+                "familyName": row.get("familyName", ""),
+                "constructorName": row.get("constructorName", ""),
+                "grid": row.get("grid"),
+                "laps": row.get("laps"),
+                "status": row.get("status", ""),
+                "points": row.get("points"),
+                "time": str(row["finishingTime"]) if row.get("finishingTime") else None,
+            }
+        )
 
     return records
 

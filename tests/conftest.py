@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 # Telemetry helper
 # ---------------------------------------------------------------------------
 
+
 class MockTelemetry(pd.DataFrame):
     """DataFrame subclass with a no-op add_distance() so tests can call it."""
 
@@ -23,19 +24,22 @@ class MockTelemetry(pd.DataFrame):
 
 def _make_telemetry(n: int = 1000) -> MockTelemetry:
     dist = np.linspace(0, 3337.0, n)
-    return MockTelemetry({
-        "Distance": dist,
-        "Speed": np.full(n, 200.0),
-        "Throttle": np.full(n, 80.0),
-        "Brake": np.zeros(n, dtype=bool),
-        "nGear": np.full(n, 6, dtype=int),
-        "DRS": np.zeros(n, dtype=int),
-    })
+    return MockTelemetry(
+        {
+            "Distance": dist,
+            "Speed": np.full(n, 200.0),
+            "Throttle": np.full(n, 80.0),
+            "Brake": np.zeros(n, dtype=bool),
+            "nGear": np.full(n, 6, dtype=int),
+            "DRS": np.zeros(n, dtype=int),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Lap & Laps helpers
 # ---------------------------------------------------------------------------
+
 
 def make_mock_lap(
     driver: str = "VER",
@@ -104,26 +108,29 @@ def make_mock_laps_for_driver(
 # Session fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_session() -> MagicMock:
     """Mock FastF1 session with results DataFrame, laps, and three drivers."""
     drivers = ["VER", "LEC", "SAI"]
 
-    results_df = pd.DataFrame({
-        "Position":     [1.0,   2.0,    3.0],
-        "Abbreviation": ["VER", "LEC",  "SAI"],
-        "DriverNumber": ["1",   "16",   "55"],
-        "FullName":     ["Max Verstappen", "Charles Leclerc", "Carlos Sainz"],
-        "TeamName":     ["Red Bull", "Ferrari", "Ferrari"],
-        "GridPosition": [1.0, 3.0, 2.0],
-        "Status":       ["Finished", "Finished", "Finished"],
-        "Points":       [25.0, 18.0, 15.0],
-        "Time":         [
-            pd.Timedelta("1:30:00"),
-            pd.Timedelta("1:30:10"),
-            pd.Timedelta("1:30:20"),
-        ],
-    })
+    results_df = pd.DataFrame(
+        {
+            "Position": [1.0, 2.0, 3.0],
+            "Abbreviation": ["VER", "LEC", "SAI"],
+            "DriverNumber": ["1", "16", "55"],
+            "FullName": ["Max Verstappen", "Charles Leclerc", "Carlos Sainz"],
+            "TeamName": ["Red Bull", "Ferrari", "Ferrari"],
+            "GridPosition": [1.0, 3.0, 2.0],
+            "Status": ["Finished", "Finished", "Finished"],
+            "Points": [25.0, 18.0, 15.0],
+            "Time": [
+                pd.Timedelta("1:30:00"),
+                pd.Timedelta("1:30:10"),
+                pd.Timedelta("1:30:20"),
+            ],
+        }
+    )
 
     per_driver = {d: make_mock_laps_for_driver(d) for d in drivers}
 

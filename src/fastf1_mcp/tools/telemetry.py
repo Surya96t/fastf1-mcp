@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_driver_lap(session_obj, driver: str, lap: int | str):
     """Return the target Lap row for a driver, or None if not found."""
     driver_laps = session_obj.laps.pick_drivers(driver)
@@ -26,7 +27,9 @@ def _get_driver_lap(session_obj, driver: str, lap: int | str):
     return matching.iloc[0] if len(matching) > 0 else None
 
 
-def _cumulative_time_at_distances(tel: pd.DataFrame, distances: np.ndarray) -> np.ndarray:
+def _cumulative_time_at_distances(
+    tel: pd.DataFrame, distances: np.ndarray
+) -> np.ndarray:
     """
     Estimate elapsed lap time (seconds) at each requested distance (metres).
 
@@ -48,6 +51,7 @@ def _cumulative_time_at_distances(tel: pd.DataFrame, distances: np.ndarray) -> n
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
+
 
 async def get_lap_telemetry(
     year: int,
@@ -105,7 +109,9 @@ async def get_lap_telemetry(
     sample_size = min(sample_size, settings.max_telemetry_samples)
 
     try:
-        session_obj = await session_manager.get_session_with_telemetry(year, event, session)
+        session_obj = await session_manager.get_session_with_telemetry(
+            year, event, session
+        )
     except Exception as e:
         logger.error(f"Failed to load session: {e}")
         return FastF1MCPError(
@@ -132,8 +138,12 @@ async def get_lap_telemetry(
 
     return {
         "driver": driver,
-        "lapNumber": int(target_lap["LapNumber"]) if pd.notna(target_lap.get("LapNumber")) else None,
-        "lapTime": str(target_lap["LapTime"]) if pd.notna(target_lap.get("LapTime")) else None,
+        "lapNumber": int(target_lap["LapNumber"])
+        if pd.notna(target_lap.get("LapNumber"))
+        else None,
+        "lapTime": str(target_lap["LapTime"])
+        if pd.notna(target_lap.get("LapTime"))
+        else None,
         "data": telemetry_to_json(telemetry, sample_size),
     }
 
@@ -203,7 +213,9 @@ async def compare_telemetry(
     sample_size = min(sample_size, settings.max_telemetry_samples)
 
     try:
-        session_obj = await session_manager.get_session_with_telemetry(year, event, session)
+        session_obj = await session_manager.get_session_with_telemetry(
+            year, event, session
+        )
     except Exception as e:
         logger.error(f"Failed to load session: {e}")
         return FastF1MCPError(
@@ -241,7 +253,9 @@ async def compare_telemetry(
 
     # Interpolate speed for both drivers at each distance point
     speed1 = np.interp(distances, tel1["Distance"].values, tel1["Speed"].values)
-    speed2 = np.interp(distances, tel2["Distance"].values.clip(0, max_dist), tel2["Speed"].values)
+    speed2 = np.interp(
+        distances, tel2["Distance"].values.clip(0, max_dist), tel2["Speed"].values
+    )
 
     # Cumulative time at each distance point
     cum_time1 = _cumulative_time_at_distances(tel1, distances)
@@ -268,7 +282,11 @@ async def compare_telemetry(
 
     # Sector summaries
     sectors = {}
-    for s_key, col in [("S1", "Sector1Time"), ("S2", "Sector2Time"), ("S3", "Sector3Time")]:
+    for s_key, col in [
+        ("S1", "Sector1Time"),
+        ("S2", "Sector2Time"),
+        ("S3", "Sector3Time"),
+    ]:
         v1 = lap1.get(col)
         v2 = lap2.get(col)
         if pd.notna(v1) and pd.notna(v2):
@@ -281,12 +299,16 @@ async def compare_telemetry(
     return {
         "driver1": {
             "code": driver1,
-            "lapNumber": int(lap1["LapNumber"]) if pd.notna(lap1.get("LapNumber")) else None,
+            "lapNumber": int(lap1["LapNumber"])
+            if pd.notna(lap1.get("LapNumber"))
+            else None,
             "lapTime": str(t1) if pd.notna(t1) else None,
         },
         "driver2": {
             "code": driver2,
-            "lapNumber": int(lap2["LapNumber"]) if pd.notna(lap2.get("LapNumber")) else None,
+            "lapNumber": int(lap2["LapNumber"])
+            if pd.notna(lap2.get("LapNumber"))
+            else None,
             "lapTime": str(t2) if pd.notna(t2) else None,
         },
         "comparison": comparison,
@@ -353,13 +375,23 @@ async def get_speed_trap_data(
     results = session_obj.results
     rows = []
     for _, row in results.iterrows():
-        rows.append({
-            "driver": row.get("Abbreviation", ""),
-            "speedTrap": float(row["SpeedST"]) if pd.notna(row.get("SpeedST")) else None,
-            "speedFL": float(row["SpeedFL"]) if pd.notna(row.get("SpeedFL")) else None,
-            "speedI1": float(row["SpeedI1"]) if pd.notna(row.get("SpeedI1")) else None,
-            "speedI2": float(row["SpeedI2"]) if pd.notna(row.get("SpeedI2")) else None,
-        })
+        rows.append(
+            {
+                "driver": row.get("Abbreviation", ""),
+                "speedTrap": float(row["SpeedST"])
+                if pd.notna(row.get("SpeedST"))
+                else None,
+                "speedFL": float(row["SpeedFL"])
+                if pd.notna(row.get("SpeedFL"))
+                else None,
+                "speedI1": float(row["SpeedI1"])
+                if pd.notna(row.get("SpeedI1"))
+                else None,
+                "speedI2": float(row["SpeedI2"])
+                if pd.notna(row.get("SpeedI2"))
+                else None,
+            }
+        )
 
     # Sort by speed trap descending; push None to end
     rows.sort(key=lambda x: (x["speedTrap"] is None, -(x["speedTrap"] or 0)))
@@ -450,19 +482,21 @@ async def get_sector_times(
         if best_s1 is not None and best_s2 is not None and best_s3 is not None:
             theoretical_best = best_s1 + best_s2 + best_s3
             if actual_best is not None:
-                gap_sec = round(
-                    (theoretical_best - actual_best).total_seconds(), 3
-                )
+                gap_sec = round((theoretical_best - actual_best).total_seconds(), 3)
 
-        results.append({
-            "driver": drv,
-            "bestS1": str(best_s1) if best_s1 is not None else None,
-            "bestS2": str(best_s2) if best_s2 is not None else None,
-            "bestS3": str(best_s3) if best_s3 is not None else None,
-            "theoreticalBest": str(theoretical_best) if theoretical_best is not None else None,
-            "actualBest": str(actual_best) if actual_best is not None else None,
-            "gapSec": gap_sec,
-        })
+        results.append(
+            {
+                "driver": drv,
+                "bestS1": str(best_s1) if best_s1 is not None else None,
+                "bestS2": str(best_s2) if best_s2 is not None else None,
+                "bestS3": str(best_s3) if best_s3 is not None else None,
+                "theoreticalBest": str(theoretical_best)
+                if theoretical_best is not None
+                else None,
+                "actualBest": str(actual_best) if actual_best is not None else None,
+                "gapSec": gap_sec,
+            }
+        )
 
     # Sort by theoretical best ascending (fastest first); push None to end
     results.sort(

@@ -24,7 +24,9 @@ async def test_cache_hit_returns_same_object():
     """Second call for the same session must return the cached object without reloading."""
     mock_session = _make_mock_session()
 
-    with patch("fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session) as mock_get:
+    with patch(
+        "fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session
+    ) as mock_get:
         manager = SessionManager(max_sessions=5)
 
         s1 = await manager.get_session(2024, "Monaco", "R")
@@ -47,7 +49,9 @@ async def test_cache_hit_is_fast():
         time.sleep(0.05)  # simulate 50ms load
         return mock_session
 
-    with patch("fastf1_mcp.session_manager.fastf1.get_session", side_effect=slow_get_session):
+    with patch(
+        "fastf1_mcp.session_manager.fastf1.get_session", side_effect=slow_get_session
+    ):
         manager = SessionManager(max_sessions=5)
 
         # First call — loads (slow)
@@ -71,12 +75,16 @@ async def test_lru_eviction_drops_oldest():
     """Loading more sessions than max_sessions must evict the least-recently-used one."""
     mock_session = _make_mock_session()
 
-    with patch("fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session):
+    with patch(
+        "fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session
+    ):
         manager = SessionManager(max_sessions=3)
 
-        await manager.get_session(2024, "Bahrain", "R")    # key: 2024:Bahrain:R  (oldest)
-        await manager.get_session(2024, "Jeddah", "R")     # key: 2024:Jeddah:R
-        await manager.get_session(2024, "Australia", "R")  # key: 2024:Australia:R — cache full
+        await manager.get_session(2024, "Bahrain", "R")  # key: 2024:Bahrain:R  (oldest)
+        await manager.get_session(2024, "Jeddah", "R")  # key: 2024:Jeddah:R
+        await manager.get_session(
+            2024, "Australia", "R"
+        )  # key: 2024:Australia:R — cache full
 
         assert len(manager._cache) == 3
         assert "2024:Bahrain:R" in manager._cache
@@ -94,11 +102,13 @@ async def test_lru_eviction_respects_access_order():
     """Accessing an old session refreshes its recency so it isn't evicted first."""
     mock_session = _make_mock_session()
 
-    with patch("fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session):
+    with patch(
+        "fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session
+    ):
         manager = SessionManager(max_sessions=2)
 
-        await manager.get_session(2024, "Bahrain", "R")   # loaded first
-        await manager.get_session(2024, "Jeddah", "R")    # loaded second — cache full
+        await manager.get_session(2024, "Bahrain", "R")  # loaded first
+        await manager.get_session(2024, "Jeddah", "R")  # loaded second — cache full
 
         # Re-access Bahrain — it should become the MRU
         await manager.get_session(2024, "Bahrain", "R")
@@ -116,7 +126,9 @@ async def test_clear_cache_all():
     """clear_cache() with no args clears everything."""
     mock_session = _make_mock_session()
 
-    with patch("fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session):
+    with patch(
+        "fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session
+    ):
         manager = SessionManager(max_sessions=5)
 
         await manager.get_session(2024, "Bahrain", "R")
@@ -132,7 +144,9 @@ async def test_clear_cache_by_year():
     """clear_cache(year=2024) only removes sessions for that year."""
     mock_session = _make_mock_session()
 
-    with patch("fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session):
+    with patch(
+        "fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session
+    ):
         manager = SessionManager(max_sessions=5)
 
         await manager.get_session(2024, "Monaco", "R")
@@ -148,17 +162,20 @@ async def test_clear_cache_by_year():
 # Phase 3.3 verification: telemetry sampling
 # ---------------------------------------------------------------------------
 
+
 def _make_mock_telemetry(n_points: int = 1000) -> pd.DataFrame:
     """Synthetic telemetry DataFrame with n_points rows."""
     distance = np.linspace(0, 3337.0, n_points)  # Monaco lap ~3337m
-    return pd.DataFrame({
-        "Distance": distance,
-        "Speed": np.random.uniform(60, 300, n_points),
-        "Throttle": np.random.uniform(0, 100, n_points),
-        "Brake": np.random.choice([True, False], n_points),
-        "nGear": np.random.randint(1, 9, n_points),
-        "DRS": np.zeros(n_points, dtype=int),
-    })
+    return pd.DataFrame(
+        {
+            "Distance": distance,
+            "Speed": np.random.uniform(60, 300, n_points),
+            "Throttle": np.random.uniform(0, 100, n_points),
+            "Brake": np.random.choice([True, False], n_points),
+            "nGear": np.random.randint(1, 9, n_points),
+            "DRS": np.zeros(n_points, dtype=int),
+        }
+    )
 
 
 @pytest.mark.parametrize("sample_size", [50, 200, 500])
@@ -176,7 +193,12 @@ def test_telemetry_response_under_100kb(sample_size):
     """JSON-encoded telemetry response must stay under 100 KB for all valid sample sizes."""
     tel = _make_mock_telemetry(n_points=1000)
     result = telemetry_to_json(tel, sample_size=sample_size)
-    payload = {"telemetry": result, "driver": "VER", "lap": "fastest", "sampleSize": sample_size}
+    payload = {
+        "telemetry": result,
+        "driver": "VER",
+        "lap": "fastest",
+        "sampleSize": sample_size,
+    }
     size_bytes = len(json.dumps(payload).encode())
     assert size_bytes < 100_000, (
         f"Response for sample_size={sample_size} is {size_bytes} bytes (≥ 100KB)"
