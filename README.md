@@ -46,7 +46,7 @@ pip install fastf1-mcp-server
 
 ```bash
 # via uv (development)
-uv run fastf1-mcp
+uv run fastf1-mcp-server
 
 # or directly
 python -m fastf1_mcp
@@ -56,7 +56,7 @@ python -m fastf1_mcp
 
 ```bash
 # Option A — official npx inspector
-npx @modelcontextprotocol/inspector uv --directory . run fastf1-mcp
+npx @modelcontextprotocol/inspector uv --directory . run fastf1-mcp-server
 
 # Option B — fastmcp wrapper
 uv run fastmcp dev inspector -m fastf1_mcp.server --with-editable .
@@ -75,7 +75,7 @@ Add the following to `~/Library/Application Support/Claude/claude_desktop_config
   "mcpServers": {
     "fastf1": {
       "command": "uv",
-      "args": ["run", "fastf1-mcp"],
+      "args": ["run", "fastf1-mcp-server"],
       "cwd": "/absolute/path/to/fastf1-mcp",
       "env": {
         "FASTF1_MCP_LOG_LEVEL": "INFO",

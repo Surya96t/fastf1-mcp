@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-fastf1-mcp = "fastf1_mcp.server:main"
+fastf1-mcp-server = "fastf1_mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]
