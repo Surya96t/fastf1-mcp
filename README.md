@@ -37,7 +37,7 @@ uv sync
 ### With pip
 
 ```bash
-pip install fastf1-mcp
+pip install fastf1-mcp-server
 ```
 
 ---

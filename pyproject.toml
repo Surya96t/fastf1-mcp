@@ -1,5 +1,5 @@
 [project]
-name = "fastf1-mcp"
+name = "fastf1-mcp-server"
 version = "0.1.0"
 description = "MCP server for Formula 1 data via FastF1"
 readme = "README.md"
