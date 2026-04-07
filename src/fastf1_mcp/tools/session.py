@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 import pandas as pd
@@ -294,14 +293,16 @@ async def get_race_pace(
 
         avg_time = lap_times.mean()
 
-        pace_data.append({
-            "driver": driver,
-            "_avgRaw": avg_time,
-            "avgLapTime": str(avg_time),
-            "lapCount": len(lap_times),
-            "fastestLap": str(lap_times.min()),
-            "slowestLap": str(lap_times.max()),
-        })
+        pace_data.append(
+            {
+                "driver": driver,
+                "_avgRaw": avg_time,
+                "avgLapTime": str(avg_time),
+                "lapCount": len(lap_times),
+                "fastestLap": str(lap_times.min()),
+                "slowestLap": str(lap_times.max()),
+            }
+        )
 
     # Sort by raw Timedelta (avoids unreliable string comparison)
     pace_data.sort(key=lambda x: x["_avgRaw"])
@@ -390,7 +391,11 @@ async def get_stint_analysis(
 
             compound = "UNKNOWN"
             if "Compound" in stint_laps.columns and len(stint_laps) > 0:
-                compound = stint_laps["Compound"].dropna().iloc[0] if not stint_laps["Compound"].dropna().empty else "UNKNOWN"
+                compound = (
+                    stint_laps["Compound"].dropna().iloc[0]
+                    if not stint_laps["Compound"].dropna().empty
+                    else "UNKNOWN"
+                )
 
             entry: dict = {
                 "driver": drv,
@@ -490,17 +495,19 @@ async def get_pit_stops(
                     duration = round((pit_out - pit_in).total_seconds(), 1)
                 compound_to = out_lap.get("Compound")
 
-            pit_stops.append({
-                "driver": driver,
-                "lap": int(lap_num) if pd.notna(lap_num) else None,
-                "stopNumber": None,  # filled below
-                "duration": duration,
-                "tyreFrom": in_lap.get("Compound"),
-                "tyreTo": compound_to,
-            })
+            pit_stops.append(
+                {
+                    "driver": driver,
+                    "lap": int(lap_num) if pd.notna(lap_num) else None,
+                    "stopNumber": None,  # filled below
+                    "duration": duration,
+                    "tyreFrom": in_lap.get("Compound"),
+                    "tyreTo": compound_to,
+                }
+            )
 
     # Sort by lap number, then assign stop numbers per driver
-    pit_stops.sort(key=lambda x: (x["lap"] or 0))
+    pit_stops.sort(key=lambda x: x["lap"] or 0)
     driver_stop_count: dict[str, int] = {}
     for stop in pit_stops:
         drv = stop["driver"]
@@ -579,11 +586,15 @@ async def get_qualifying_breakdown(
                 continue
             best_idx = drv_laps["LapTime"].idxmin()
             best = drv_laps.loc[best_idx]
-            entries.append({
-                "driver": drv,
-                "bestTime": str(best["LapTime"]),
-                "lapNumber": int(best["LapNumber"]) if pd.notna(best.get("LapNumber")) else None,
-            })
+            entries.append(
+                {
+                    "driver": drv,
+                    "bestTime": str(best["LapTime"]),
+                    "lapNumber": int(best["LapNumber"])
+                    if pd.notna(best.get("LapNumber"))
+                    else None,
+                }
+            )
         entries.sort(key=lambda x: x["bestTime"])
         return entries
 

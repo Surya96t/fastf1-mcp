@@ -5,7 +5,8 @@ from fastmcp.prompts import Message
 
 def race_recap(year: int, event: str) -> list[Message]:
     """Generate a comprehensive race summary."""
-    return [Message(f"""
+    return [
+        Message(f"""
 Create a race recap for the {event} {year} Grand Prix. Follow these steps:
 
 1. Call get_session_results({year}, "{event}", "R") to get the final classification
@@ -21,12 +22,14 @@ Then synthesize into a narrative covering:
 - Fastest lap and notable performances
 
 Keep it engaging and informative for F1 fans.
-""")]
+""")
+    ]
 
 
 def qualifying_analysis(year: int, event: str) -> list[Message]:
     """Analyze qualifying session performance."""
-    return [Message(f"""
+    return [
+        Message(f"""
 Analyze qualifying for the {event} {year} Grand Prix:
 
 1. Call get_qualifying_breakdown({year}, "{event}") for Q1/Q2/Q3 results
@@ -38,12 +41,14 @@ Provide analysis covering:
 - Surprise eliminations in Q1/Q2
 - Gaps between teammates
 - Any notable improvements or struggles
-""")]
+""")
+    ]
 
 
 def driver_comparison(year: int, driver1: str, driver2: str) -> list[Message]:
     """Compare two drivers across a season."""
-    return [Message(f"""
+    return [
+        Message(f"""
 Compare {driver1} and {driver2} for the {year} season:
 
 1. Call get_driver_standings({year}) for championship positions
@@ -56,12 +61,14 @@ Create a comparison covering:
 - Head-to-head in qualifying
 - Average race pace when both finished
 - Key moments that defined their rivalry
-""")]
+""")
+    ]
 
 
 def strategy_analysis(year: int, event: str) -> list[Message]:
     """Deep dive into race strategy."""
-    return [Message(f"""
+    return [
+        Message(f"""
 Analyze race strategy for the {event} {year} Grand Prix:
 
 1. Call get_stint_analysis({year}, "{event}") for all driver stints
@@ -74,12 +81,14 @@ Analyze:
 - Tire degradation patterns by compound
 - How safety cars affected strategies
 - Which teams made the best strategic calls
-""")]
+""")
+    ]
 
 
 def weekend_preview(year: int, event: str) -> list[Message]:
     """Generate a race weekend preview."""
-    return [Message(f"""
+    return [
+        Message(f"""
 Create a preview for the {event} {year} Grand Prix:
 
 1. Call get_circuit_info() to get circuit details
@@ -92,4 +101,5 @@ Preview should cover:
 - Championship implications
 - Key storylines to watch
 - Predicted tire strategies
-""")]
+""")
+    ]

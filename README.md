@@ -1,5 +1,7 @@
 # fastf1-mcp
 
+[![CI](https://github.com/Surya96t/fastf1-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Surya96t/fastf1-mcp/actions/workflows/ci.yml)
+
 An [MCP](https://modelcontextprotocol.io) server that exposes Formula 1 data to AI assistants via the [FastF1](https://docs.fastf1.dev) library. Ask Claude (or any MCP-compatible client) questions about race results, lap times, telemetry, standings, and more.
 
 ---
@@ -35,7 +37,7 @@ uv sync
 ### With pip
 
 ```bash
-pip install fastf1-mcp
+pip install fastf1-mcp-server
 ```
 
 ---
@@ -44,7 +46,7 @@ pip install fastf1-mcp
 
 ```bash
 # via uv (development)
-uv run fastf1-mcp
+uv run fastf1-mcp-server
 
 # or directly
 python -m fastf1_mcp
@@ -54,7 +56,7 @@ python -m fastf1_mcp
 
 ```bash
 # Option A — official npx inspector
-npx @modelcontextprotocol/inspector uv --directory . run fastf1-mcp
+npx @modelcontextprotocol/inspector uv --directory . run fastf1-mcp-server
 
 # Option B — fastmcp wrapper
 uv run fastmcp dev inspector -m fastf1_mcp.server --with-editable .
@@ -73,7 +75,7 @@ Add the following to `~/Library/Application Support/Claude/claude_desktop_config
   "mcpServers": {
     "fastf1": {
       "command": "uv",
-      "args": ["run", "fastf1-mcp"],
+      "args": ["run", "fastf1-mcp-server"],
       "cwd": "/absolute/path/to/fastf1-mcp",
       "env": {
         "FASTF1_MCP_LOG_LEVEL": "INFO",
