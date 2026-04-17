@@ -29,7 +29,7 @@ An [MCP](https://modelcontextprotocol.io) server that exposes Formula 1 data to 
 ### With uv (recommended)
 
 ```bash
-git clone https://github.com/yourname/fastf1-mcp
+git clone https://github.com/Surya96t/fastf1-mcp
 cd fastf1-mcp
 uv sync
 ```
