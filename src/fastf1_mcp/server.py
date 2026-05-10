@@ -1,11 +1,17 @@
 import asyncio
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 import fastf1
 from fastmcp import FastMCP
 
 from .config import settings
 from .logging_config import setup_logging
+
+try:
+    __version__ = _pkg_version("fastf1-mcp-server")
+except PackageNotFoundError:
+    __version__ = "0.0.0+unknown"
 from .tools.lookups import (
     get_schedule,
     get_driver_standings,
@@ -74,7 +80,7 @@ def _enable_fastf1_cache() -> None:
 # Create MCP server
 mcp = FastMCP(
     name="fastf1-mcp",
-    version="0.1.0",
+    version=__version__,
     instructions="Formula 1 data via FastF1 - telemetry, timing, standings, and more",
     lifespan=lifespan,
 )
