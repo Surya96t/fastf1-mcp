@@ -115,6 +115,7 @@ class SessionManager:
             # Evict if at capacity
             while len(self._cache) >= self.max_sessions:
                 evicted_key, _ = self._cache.popitem(last=False)
+                self._locks.pop(evicted_key, None)
                 logger.info(f"Evicted from cache: {evicted_key}")
 
             self._cache[key] = CachedSession(
@@ -165,6 +166,7 @@ class SessionManager:
         if year is None:
             count = len(self._cache)
             self._cache.clear()
+            self._locks.clear()
             return count
 
         keys_to_remove = [
@@ -175,6 +177,7 @@ class SessionManager:
 
         for key in keys_to_remove:
             del self._cache[key]
+            self._locks.pop(key, None)
 
         return len(keys_to_remove)
 

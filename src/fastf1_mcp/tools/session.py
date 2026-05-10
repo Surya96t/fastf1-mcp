@@ -2,13 +2,14 @@ import logging
 
 import pandas as pd
 
-from ..session_manager import session_manager
 from ..utils.converters import laps_to_json, results_to_json
 from ..utils.errors import ErrorCode, FastF1MCPError
+from ..utils.session_loader import require_session, tool_handler
 
 logger = logging.getLogger(__name__)
 
 
+@tool_handler
 async def get_session_results(
     year: int,
     event: str | int,
@@ -41,32 +42,11 @@ async def get_session_results(
         get_race_results_historical.
     """
     logger.info(f"get_session_results: {year=}, {event=}, {session=}")
-
-    if year < 2018:
-        return FastF1MCPError(
-            ErrorCode.YEAR_OUT_OF_RANGE,
-            f"FastF1 session data requires 2018+, got {year}",
-            suggestions=["Use get_race_results_historical for pre-2018 data"],
-        ).to_dict()
-
-    try:
-        session_obj = await session_manager.get_session(
-            year, event, session, load_laps=False
-        )
-    except Exception as e:
-        logger.error(f"Failed to load session {year} {event} {session}: {e}")
-        return FastF1MCPError(
-            ErrorCode.SESSION_NOT_FOUND,
-            f"Could not load session: {year} {event} {session}. {e}",
-            suggestions=[
-                "Check that the event name is correct (e.g. 'Monaco', 'Bahrain')",
-                "Use list_events(year) to see valid event names",
-            ],
-        ).to_dict()
-
+    session_obj = await require_session(year, event, session, load_laps=False)
     return results_to_json(session_obj.results)
 
 
+@tool_handler
 async def get_lap_times(
     year: int,
     event: str | int,
@@ -104,39 +84,23 @@ async def get_lap_times(
     logger.info(
         f"get_lap_times: {year=}, {event=}, {session=}, {driver=}, {include_deleted=}"
     )
-
-    if year < 2018:
-        return FastF1MCPError(
-            ErrorCode.YEAR_OUT_OF_RANGE,
-            f"FastF1 session data requires 2018+, got {year}",
-            suggestions=["Use get_race_results_historical for pre-2018 data"],
-        ).to_dict()
-
-    try:
-        session_obj = await session_manager.get_session(year, event, session)
-    except Exception as e:
-        logger.error(f"Failed to load session: {e}")
-        return FastF1MCPError(
-            ErrorCode.SESSION_NOT_FOUND,
-            f"Could not load session: {year} {event} {session}. {e}",
-            suggestions=["Use list_events(year) to see valid event names"],
-        ).to_dict()
-
+    session_obj = await require_session(year, event, session)
     laps = session_obj.laps.pick_drivers(driver)
 
     if len(laps) == 0:
-        return FastF1MCPError(
+        raise FastF1MCPError(
             ErrorCode.DRIVER_NOT_FOUND,
             f"No laps found for driver '{driver}' in {year} {event} {session}",
             suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
-        ).to_dict()
+        )
 
-    if not include_deleted:
+    if not include_deleted and "Deleted" in laps.columns:
         laps = laps[~laps["Deleted"].fillna(False)]
 
     return laps_to_json(laps)
 
 
+@tool_handler
 async def get_fastest_laps(
     year: int,
     event: str | int,
@@ -157,7 +121,7 @@ async def get_fastest_laps(
 
     Returns:
         Fastest laps sorted by time: lapNumber, lapTime, sector1,
-        sector2, sector3, compound, driver
+        sector2, sector3, compound
 
     Example:
         get_fastest_laps(2024, "Monaco", "R", 5) → [
@@ -169,23 +133,7 @@ async def get_fastest_laps(
         Returns one fastest lap per driver. Only accurate laps are included.
     """
     logger.info(f"get_fastest_laps: {year=}, {event=}, {session=}, {top_n=}")
-
-    if year < 2018:
-        return FastF1MCPError(
-            ErrorCode.YEAR_OUT_OF_RANGE,
-            f"FastF1 session data requires 2018+, got {year}",
-            suggestions=["Use get_race_results_historical for pre-2018 data"],
-        ).to_dict()
-
-    try:
-        session_obj = await session_manager.get_session(year, event, session)
-    except Exception as e:
-        logger.error(f"Failed to load session: {e}")
-        return FastF1MCPError(
-            ErrorCode.SESSION_NOT_FOUND,
-            f"Could not load session: {year} {event} {session}. {e}",
-            suggestions=["Use list_events(year) to see valid event names"],
-        ).to_dict()
+    session_obj = await require_session(year, event, session)
 
     fastest_laps = []
     for driver in session_obj.drivers:
@@ -209,6 +157,7 @@ async def get_fastest_laps(
     return laps_to_json(results_df)
 
 
+@tool_handler
 async def get_race_pace(
     year: int,
     event: str | int,
@@ -250,23 +199,7 @@ async def get_race_pace(
         f"get_race_pace: {year=}, {event=}, {exclude_first_laps=}, "
         f"{exclude_sc_laps=}, {exclude_pit_laps=}, {min_laps=}"
     )
-
-    if year < 2018:
-        return FastF1MCPError(
-            ErrorCode.YEAR_OUT_OF_RANGE,
-            f"FastF1 session data requires 2018+, got {year}",
-            suggestions=["Use get_race_results_historical for pre-2018 data"],
-        ).to_dict()
-
-    try:
-        session_obj = await session_manager.get_session(year, event, "R")
-    except Exception as e:
-        logger.error(f"Failed to load session: {e}")
-        return FastF1MCPError(
-            ErrorCode.SESSION_NOT_FOUND,
-            f"Could not load session: {year} {event} R. {e}",
-            suggestions=["Use list_events(year) to see valid event names"],
-        ).to_dict()
+    session_obj = await require_session(year, event, "R")
 
     pace_data = []
 
@@ -307,7 +240,6 @@ async def get_race_pace(
     # Sort by raw Timedelta (avoids unreliable string comparison)
     pace_data.sort(key=lambda x: x["_avgRaw"])
 
-    # Compute delta to leader in seconds, then strip the internal sort key
     if pace_data:
         fastest_raw = pace_data[0]["_avgRaw"]
         for item in pace_data:
@@ -319,6 +251,7 @@ async def get_race_pace(
     return pace_data
 
 
+@tool_handler
 async def get_stint_analysis(
     year: int,
     event: str | int,
@@ -351,33 +284,17 @@ async def get_stint_analysis(
         Stint numbers match FastF1's internal stint counter.
     """
     logger.info(f"get_stint_analysis: {year=}, {event=}, {driver=}")
-
-    if year < 2018:
-        return FastF1MCPError(
-            ErrorCode.YEAR_OUT_OF_RANGE,
-            f"FastF1 session data requires 2018+, got {year}",
-            suggestions=["Use get_race_results_historical for pre-2018 data"],
-        ).to_dict()
-
-    try:
-        session_obj = await session_manager.get_session(year, event, "R")
-    except Exception as e:
-        logger.error(f"Failed to load session: {e}")
-        return FastF1MCPError(
-            ErrorCode.SESSION_NOT_FOUND,
-            f"Could not load session: {year} {event} R. {e}",
-            suggestions=["Use list_events(year) to see valid event names"],
-        ).to_dict()
+    session_obj = await require_session(year, event, "R")
 
     laps = session_obj.laps
     if driver is not None:
         laps = laps.pick_drivers(driver)
         if len(laps) == 0:
-            return FastF1MCPError(
+            raise FastF1MCPError(
                 ErrorCode.DRIVER_NOT_FOUND,
                 f"No laps found for driver '{driver}'",
                 suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
-            ).to_dict()
+            )
 
     results = []
 
@@ -422,6 +339,7 @@ async def get_stint_analysis(
     return results
 
 
+@tool_handler
 async def get_pit_stops(
     year: int,
     event: str | int,
@@ -452,23 +370,7 @@ async def get_pit_stops(
         PitOutTime (start of out-lap), in seconds.
     """
     logger.info(f"get_pit_stops: {year=}, {event=}")
-
-    if year < 2018:
-        return FastF1MCPError(
-            ErrorCode.YEAR_OUT_OF_RANGE,
-            f"FastF1 session data requires 2018+, got {year}",
-            suggestions=["Use get_race_results_historical for pre-2018 data"],
-        ).to_dict()
-
-    try:
-        session_obj = await session_manager.get_session(year, event, "R")
-    except Exception as e:
-        logger.error(f"Failed to load session: {e}")
-        return FastF1MCPError(
-            ErrorCode.SESSION_NOT_FOUND,
-            f"Could not load session: {year} {event} R. {e}",
-            suggestions=["Use list_events(year) to see valid event names"],
-        ).to_dict()
+    session_obj = await require_session(year, event, "R")
 
     pit_stops = []
 
@@ -478,10 +380,14 @@ async def get_pit_stops(
         # In-laps: laps where PitInTime is set (driver entered pits at lap end)
         in_laps = driver_laps[driver_laps["PitInTime"].notna()]
 
-        for _, in_lap in in_laps.iterrows():
-            lap_num = in_lap["LapNumber"]
+        # Order this driver's stops by lap so stopNumber is well-defined.
+        in_laps_sorted = in_laps.sort_values("LapNumber")
 
-            # The out-lap is the very next lap for this driver
+        for stop_idx, (_, in_lap) in enumerate(in_laps_sorted.iterrows(), start=1):
+            lap_num = in_lap["LapNumber"]
+            if pd.isna(lap_num):
+                continue
+
             out_laps = driver_laps[driver_laps["LapNumber"] == lap_num + 1]
 
             duration = None
@@ -498,25 +404,20 @@ async def get_pit_stops(
             pit_stops.append(
                 {
                     "driver": driver,
-                    "lap": int(lap_num) if pd.notna(lap_num) else None,
-                    "stopNumber": None,  # filled below
+                    "lap": int(lap_num),
+                    "stopNumber": stop_idx,
                     "duration": duration,
                     "tyreFrom": in_lap.get("Compound"),
                     "tyreTo": compound_to,
                 }
             )
 
-    # Sort by lap number, then assign stop numbers per driver
-    pit_stops.sort(key=lambda x: x["lap"] or 0)
-    driver_stop_count: dict[str, int] = {}
-    for stop in pit_stops:
-        drv = stop["driver"]
-        driver_stop_count[drv] = driver_stop_count.get(drv, 0) + 1
-        stop["stopNumber"] = driver_stop_count[drv]
-
+    # Stable global sort by (lap, driver) — preserves per-driver stopNumber
+    pit_stops.sort(key=lambda x: (x["lap"], x["driver"]))
     return pit_stops
 
 
+@tool_handler
 async def get_qualifying_breakdown(
     year: int,
     event: str | int,
@@ -555,28 +456,14 @@ async def get_qualifying_breakdown(
         that segment's list.
     """
     logger.info(f"get_qualifying_breakdown: {year=}, {event=}")
-
-    if year < 2018:
-        return FastF1MCPError(
-            ErrorCode.YEAR_OUT_OF_RANGE,
-            f"FastF1 session data requires 2018+, got {year}",
-            suggestions=["Use get_race_results_historical for pre-2018 data"],
-        ).to_dict()
-
-    try:
-        session_obj = await session_manager.get_session(year, event, "Q")
-    except Exception as e:
-        logger.error(f"Failed to load qualifying session: {e}")
-        return FastF1MCPError(
-            ErrorCode.SESSION_NOT_FOUND,
-            f"Could not load qualifying session: {year} {event} Q. {e}",
-            suggestions=["Use list_events(year) to see valid event names"],
-        ).to_dict()
+    session_obj = await require_session(year, event, "Q")
 
     q1, q2, q3 = session_obj.laps.split_qualifying_sessions()
 
+    _max_td = pd.Timedelta.max
+
     def _best_times(qlaps: pd.DataFrame) -> list[dict]:
-        """Return best lap per driver, sorted by time."""
+        """Return best lap per driver, sorted by raw Timedelta."""
         if len(qlaps) == 0:
             return []
         entries = []
@@ -588,6 +475,7 @@ async def get_qualifying_breakdown(
             best = drv_laps.loc[best_idx]
             entries.append(
                 {
+                    "_bestRaw": best["LapTime"],
                     "driver": drv,
                     "bestTime": str(best["LapTime"]),
                     "lapNumber": int(best["LapNumber"])
@@ -595,7 +483,9 @@ async def get_qualifying_breakdown(
                     else None,
                 }
             )
-        entries.sort(key=lambda x: x["bestTime"])
+        entries.sort(key=lambda x: x["_bestRaw"] or _max_td)
+        for e in entries:
+            del e["_bestRaw"]
         return entries
 
     q1_drivers = set(q1["Driver"].unique()) if len(q1) > 0 else set()

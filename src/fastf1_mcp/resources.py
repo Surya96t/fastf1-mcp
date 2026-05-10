@@ -8,8 +8,10 @@ fetch from the Ergast/Jolpica API via FastF1 and return JSON strings.
 import asyncio
 import json
 import logging
+import math
 from functools import partial
 
+import pandas as pd
 from fastf1.ergast import Ergast
 
 logger = logging.getLogger(__name__)
@@ -17,9 +19,6 @@ logger = logging.getLogger(__name__)
 
 def _to_serialisable(obj):
     """Recursively convert non-JSON-serialisable values (Timestamps, NaN, etc.)."""
-    import math
-    import pandas as pd
-
     if isinstance(obj, dict):
         return {k: _to_serialisable(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -79,7 +78,7 @@ async def drivers_resource(year: int) -> str:
     """
     logger.info(f"resource f1://drivers/{year}")
     return await _ergast_to_json(
-        lambda e, **kw: e.get_driver_info(**kw), season=year, limit=30
+        lambda e, **kw: e.get_driver_info(**kw), season=year, limit=1000
     )
 
 
@@ -91,7 +90,7 @@ async def constructors_resource(year: int) -> str:
     """
     logger.info(f"resource f1://constructors/{year}")
     return await _ergast_to_json(
-        lambda e, **kw: e.get_constructor_info(**kw), season=year, limit=20
+        lambda e, **kw: e.get_constructor_info(**kw), season=year, limit=1000
     )
 
 

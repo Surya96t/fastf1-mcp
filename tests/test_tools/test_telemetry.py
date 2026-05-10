@@ -14,7 +14,7 @@ async def test_telemetry_sample_size_capped(mock_session):
     max_telemetry_samples data points (default 500).
     """
     with patch(
-        "fastf1_mcp.tools.telemetry.session_manager.get_session_with_telemetry",
+        "fastf1_mcp.utils.session_loader.session_manager.get_session_with_telemetry",
         new_callable=AsyncMock,
         return_value=mock_session,
     ):
@@ -34,7 +34,7 @@ async def test_compare_telemetry_summary(mock_session):
     per-sector splits (S1, S2, S3).
     """
     with patch(
-        "fastf1_mcp.tools.telemetry.session_manager.get_session_with_telemetry",
+        "fastf1_mcp.utils.session_loader.session_manager.get_session_with_telemetry",
         new_callable=AsyncMock,
         return_value=mock_session,
     ):
