@@ -41,7 +41,7 @@ def laps_to_json(laps: Any) -> list[dict]:
 def _lap_row_to_dict(row: Any) -> dict:
     """Convert a single lap row to dict."""
     return {
-        "driver": row.get("Driver", None),
+        "driver": row.get("Driver") if pd.notna(row.get("Driver")) else None,
         "lapNumber": int(row["LapNumber"]) if pd.notna(row.get("LapNumber")) else None,
         "lapTime": str(row["LapTime"]) if pd.notna(row.get("LapTime")) else None,
         "sector1": str(row["Sector1Time"])
@@ -69,14 +69,18 @@ def telemetry_to_json(telemetry: Any, sample_size: int = 200) -> list[dict]:
     if n <= sample_size:
         positions = list(range(n))
     else:
-        # Distance must be sorted for searchsorted to find nearest neighbours.
-        sorted_tel = telemetry.sort_values("Distance")
+        # Distance must be sorted (and NaN-free) for searchsorted to work.
+        # pandas.sort_values puts NaN at the end, which would make max_dist NaN.
+        sorted_tel = telemetry.sort_values("Distance").dropna(subset=["Distance"])
+        if sorted_tel.empty:
+            return []
         distance_array = sorted_tel["Distance"].to_numpy()
+        valid_n = len(distance_array)
         max_dist = distance_array[-1]
         sample_distances = np.linspace(0, max_dist, sample_size)
         # Pick the closest of the two bracketing samples for each target.
         right = np.searchsorted(distance_array, sample_distances)
-        right = np.clip(right, 1, n - 1)
+        right = np.clip(right, 1, valid_n - 1)
         left = right - 1
         choose_right = np.abs(distance_array[right] - sample_distances) < np.abs(
             distance_array[left] - sample_distances

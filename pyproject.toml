@@ -31,7 +31,7 @@ source = "vcs"
 fallback-version = "0.0.0"
 
 [tool.hatch.version.raw-options]
-# Strip the leading "v" from tags like v0.2.0 → 0.2.0
+# Omit the PEP 440 local version identifier (+xyz suffix); PyPI rejects it.
 local_scheme = "no-local-version"
 
 [tool.hatch.build.hooks.vcs]
@@ -47,6 +47,7 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+extend-exclude = ["src/fastf1_mcp/_version.py"]
 
 [dependency-groups]
 dev = [

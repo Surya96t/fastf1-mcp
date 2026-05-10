@@ -39,28 +39,33 @@ def _cumulative_time_at_distances(
     if d.size == 0:
         return np.zeros_like(distances, dtype=float)
 
-    cum_time: np.ndarray | None = None
+    # Sort by distance and drop duplicates first — both branches below need
+    # monotonic-increasing xp, and the Speed-integration fallback also needs
+    # to integrate in distance order so non-monotonic samples don't bake into
+    # the cumulative-time curve.
+    order = np.argsort(d, kind="stable")
+    d_sorted = d[order]
+    keep = np.concatenate(([True], np.diff(d_sorted) > 0))
+    d_sorted = d_sorted[keep]
+
+    cum_sorted: np.ndarray | None = None
     if "Time" in tel.columns:
         try:
             t = pd.to_timedelta(tel["Time"]).dt.total_seconds().to_numpy(dtype=float)
-            cum_time = t - t[0]
+            t_sorted = t[order][keep]
+            cum_sorted = t_sorted - t_sorted[0]
         except Exception:
-            cum_time = None
+            cum_sorted = None
 
-    if cum_time is None:
-        v = tel["Speed"].to_numpy(dtype=float)
+    if cum_sorted is None:
+        v = tel["Speed"].to_numpy(dtype=float)[order][keep]
         # km/h -> m/s; clamp speed to a sane floor so a single near-zero sample
         # at standing starts / pit lane can't blow up the cumulative integral.
         v_ms = np.clip(v * (1000.0 / 3600.0), 0.5, None)
-        dd = np.diff(d, prepend=d[0])
-        cum_time = np.cumsum(dd / v_ms)
+        dd = np.diff(d_sorted, prepend=d_sorted[0])
+        cum_sorted = np.cumsum(dd / v_ms)
 
-    # np.interp requires monotonic-increasing xp; sort by distance and drop dups.
-    order = np.argsort(d, kind="stable")
-    d_sorted = d[order]
-    cum_sorted = cum_time[order]
-    keep = np.concatenate(([True], np.diff(d_sorted) > 0))
-    return np.interp(distances, d_sorted[keep], cum_sorted[keep])
+    return np.interp(distances, d_sorted, cum_sorted)
 
 
 # ---------------------------------------------------------------------------
