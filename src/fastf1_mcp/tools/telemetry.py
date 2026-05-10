@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 
 from ..config import settings
-from ..session_manager import session_manager
 from ..utils.converters import telemetry_to_json
 from ..utils.errors import ErrorCode, FastF1MCPError
+from ..utils.session_loader import require_session, tool_handler
 
 logger = logging.getLogger(__name__)
 
@@ -31,21 +31,41 @@ def _cumulative_time_at_distances(
     tel: pd.DataFrame, distances: np.ndarray
 ) -> np.ndarray:
     """
-    Estimate elapsed lap time (seconds) at each requested distance (metres).
+    Return elapsed lap time (seconds) at each requested distance (metres).
 
-    Uses Speed (km/h) and Distance to approximate dt = dd / v.
+    Prefers the recorded Time channel; falls back to integrating Speed if absent.
     """
-    d = tel["Distance"].values.astype(float)
-    v = tel["Speed"].values.astype(float)
+    d = tel["Distance"].to_numpy(dtype=float)
+    if d.size == 0:
+        return np.zeros_like(distances, dtype=float)
 
-    # Convert speed to m/s; guard against zero speed
-    v_ms = np.where(v > 0, v * (1000.0 / 3600.0), 1e-6)
+    # Sort by distance and drop duplicates first — both branches below need
+    # monotonic-increasing xp, and the Speed-integration fallback also needs
+    # to integrate in distance order so non-monotonic samples don't bake into
+    # the cumulative-time curve.
+    order = np.argsort(d, kind="stable")
+    d_sorted = d[order]
+    keep = np.concatenate(([True], np.diff(d_sorted) > 0))
+    d_sorted = d_sorted[keep]
 
-    dd = np.diff(d, prepend=d[0])
-    dt = dd / v_ms
-    cum_time = np.cumsum(dt)
+    cum_sorted: np.ndarray | None = None
+    if "Time" in tel.columns:
+        try:
+            t = pd.to_timedelta(tel["Time"]).dt.total_seconds().to_numpy(dtype=float)
+            t_sorted = t[order][keep]
+            cum_sorted = t_sorted - t_sorted[0]
+        except Exception:
+            cum_sorted = None
 
-    return np.interp(distances, d, cum_time)
+    if cum_sorted is None:
+        v = tel["Speed"].to_numpy(dtype=float)[order][keep]
+        # km/h -> m/s; clamp speed to a sane floor so a single near-zero sample
+        # at standing starts / pit lane can't blow up the cumulative integral.
+        v_ms = np.clip(v * (1000.0 / 3600.0), 0.5, None)
+        dd = np.diff(d_sorted, prepend=d_sorted[0])
+        cum_sorted = np.cumsum(dd / v_ms)
+
+    return np.interp(distances, d_sorted, cum_sorted)
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +73,7 @@ def _cumulative_time_at_distances(
 # ---------------------------------------------------------------------------
 
 
+@tool_handler
 async def get_lap_telemetry(
     year: int,
     event: str | int,
@@ -99,42 +120,24 @@ async def get_lap_telemetry(
         f"get_lap_telemetry: {year=}, {event=}, {session=}, {driver=}, {lap=}, {sample_size=}"
     )
 
-    if year < 2018:
-        return FastF1MCPError(
-            ErrorCode.YEAR_OUT_OF_RANGE,
-            f"FastF1 telemetry requires 2018+, got {year}",
-            suggestions=["Telemetry data is only available from 2018 onwards"],
-        ).to_dict()
-
-    sample_size = min(sample_size, settings.max_telemetry_samples)
-
-    try:
-        session_obj = await session_manager.get_session_with_telemetry(
-            year, event, session
-        )
-    except Exception as e:
-        logger.error(f"Failed to load session: {e}")
-        return FastF1MCPError(
-            ErrorCode.SESSION_NOT_FOUND,
-            f"Could not load session: {year} {event} {session}. {e}",
-            suggestions=["Use list_events(year) to see valid event names"],
-        ).to_dict()
+    sample_size = max(1, min(sample_size, settings.max_telemetry_samples))
+    session_obj = await require_session(year, event, session, with_telemetry=True)
 
     target_lap = _get_driver_lap(session_obj, driver, lap)
     if target_lap is None:
-        return FastF1MCPError(
+        raise FastF1MCPError(
             ErrorCode.DATA_UNAVAILABLE,
             f"No lap data found for driver '{driver}' lap={lap}",
             suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
-        ).to_dict()
+        )
 
     try:
         telemetry = target_lap.get_telemetry()
     except Exception as e:
-        return FastF1MCPError(
+        raise FastF1MCPError(
             ErrorCode.DATA_UNAVAILABLE,
             f"Telemetry unavailable for {driver} lap {lap}: {e}",
-        ).to_dict()
+        ) from e
 
     return {
         "driver": driver,
@@ -148,6 +151,7 @@ async def get_lap_telemetry(
     }
 
 
+@tool_handler
 async def compare_telemetry(
     year: int,
     event: str | int,
@@ -204,60 +208,54 @@ async def compare_telemetry(
         f"compare_telemetry: {year=}, {event=}, {session=}, {driver1=}, {driver2=}, {lap=}"
     )
 
-    if year < 2018:
-        return FastF1MCPError(
-            ErrorCode.YEAR_OUT_OF_RANGE,
-            f"FastF1 telemetry requires 2018+, got {year}",
-        ).to_dict()
-
-    sample_size = min(sample_size, settings.max_telemetry_samples)
-
-    try:
-        session_obj = await session_manager.get_session_with_telemetry(
-            year, event, session
-        )
-    except Exception as e:
-        logger.error(f"Failed to load session: {e}")
-        return FastF1MCPError(
-            ErrorCode.SESSION_NOT_FOUND,
-            f"Could not load session: {year} {event} {session}. {e}",
-            suggestions=["Use list_events(year) to see valid event names"],
-        ).to_dict()
+    sample_size = max(1, min(sample_size, settings.max_telemetry_samples))
+    session_obj = await require_session(year, event, session, with_telemetry=True)
 
     lap1 = _get_driver_lap(session_obj, driver1, lap)
     lap2 = _get_driver_lap(session_obj, driver2, lap)
 
     if lap1 is None:
-        return FastF1MCPError(
+        raise FastF1MCPError(
             ErrorCode.DRIVER_NOT_FOUND,
             f"No lap found for driver '{driver1}'",
-        ).to_dict()
+            suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
+        )
     if lap2 is None:
-        return FastF1MCPError(
+        raise FastF1MCPError(
             ErrorCode.DRIVER_NOT_FOUND,
             f"No lap found for driver '{driver2}'",
-        ).to_dict()
+            suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
+        )
 
     try:
         tel1 = lap1.get_telemetry().add_distance()
         tel2 = lap2.get_telemetry().add_distance()
     except Exception as e:
-        return FastF1MCPError(
+        raise FastF1MCPError(
             ErrorCode.DATA_UNAVAILABLE,
             f"Telemetry unavailable: {e}",
-        ).to_dict()
+        ) from e
 
     # Distance grid aligned to driver1
     max_dist = float(tel1["Distance"].max())
     distances = np.linspace(0, max_dist, sample_size)
 
-    # Interpolate speed for both drivers at each distance point
-    speed1 = np.interp(distances, tel1["Distance"].values, tel1["Speed"].values)
-    speed2 = np.interp(
-        distances, tel2["Distance"].values.clip(0, max_dist), tel2["Speed"].values
-    )
+    # Interpolate speed for both drivers. np.interp requires xp to be monotonic
+    # increasing, so sort+dedup and (for tel2) restrict to the driver1 window.
+    def _interp_speed(tel: pd.DataFrame, max_d: float | None = None) -> np.ndarray:
+        d = tel["Distance"].to_numpy(dtype=float)
+        s = tel["Speed"].to_numpy(dtype=float)
+        if max_d is not None:
+            mask = d <= max_d
+            d, s = d[mask], s[mask]
+        order = np.argsort(d, kind="stable")
+        d, s = d[order], s[order]
+        keep = np.concatenate(([True], np.diff(d) > 0))
+        return np.interp(distances, d[keep], s[keep])
 
-    # Cumulative time at each distance point
+    speed1 = _interp_speed(tel1)
+    speed2 = _interp_speed(tel2, max_d=max_dist)
+
     cum_time1 = _cumulative_time_at_distances(tel1, distances)
     cum_time2 = _cumulative_time_at_distances(tel2, distances)
     time_delta = cum_time1 - cum_time2  # positive = driver1 ahead in elapsed time
@@ -273,14 +271,12 @@ async def compare_telemetry(
         for i in range(sample_size)
     ]
 
-    # Lap time delta
     t1 = lap1.get("LapTime")
     t2 = lap2.get("LapTime")
     lap_time_delta = None
     if pd.notna(t1) and pd.notna(t2):
         lap_time_delta = round((t1 - t2).total_seconds(), 3)
 
-    # Sector summaries
     sectors = {}
     for s_key, col in [
         ("S1", "Sector1Time"),
@@ -320,6 +316,7 @@ async def compare_telemetry(
     }
 
 
+@tool_handler
 async def get_speed_trap_data(
     year: int,
     event: str | int,
@@ -353,24 +350,7 @@ async def get_speed_trap_data(
         Values are in km/h.
     """
     logger.info(f"get_speed_trap_data: {year=}, {event=}, {session=}")
-
-    if year < 2018:
-        return FastF1MCPError(
-            ErrorCode.YEAR_OUT_OF_RANGE,
-            f"FastF1 session data requires 2018+, got {year}",
-        ).to_dict()
-
-    try:
-        session_obj = await session_manager.get_session(
-            year, event, session, load_laps=False
-        )
-    except Exception as e:
-        logger.error(f"Failed to load session: {e}")
-        return FastF1MCPError(
-            ErrorCode.SESSION_NOT_FOUND,
-            f"Could not load session: {year} {event} {session}. {e}",
-            suggestions=["Use list_events(year) to see valid event names"],
-        ).to_dict()
+    session_obj = await require_session(year, event, session, load_laps=False)
 
     results = session_obj.results
     rows = []
@@ -398,6 +378,7 @@ async def get_speed_trap_data(
     return rows
 
 
+@tool_handler
 async def get_sector_times(
     year: int,
     event: str | int,
@@ -434,32 +415,17 @@ async def get_sector_times(
         sector bests usually come from different laps.
     """
     logger.info(f"get_sector_times: {year=}, {event=}, {session=}, {driver=}")
-
-    if year < 2018:
-        return FastF1MCPError(
-            ErrorCode.YEAR_OUT_OF_RANGE,
-            f"FastF1 session data requires 2018+, got {year}",
-        ).to_dict()
-
-    try:
-        session_obj = await session_manager.get_session(year, event, session)
-    except Exception as e:
-        logger.error(f"Failed to load session: {e}")
-        return FastF1MCPError(
-            ErrorCode.SESSION_NOT_FOUND,
-            f"Could not load session: {year} {event} {session}. {e}",
-            suggestions=["Use list_events(year) to see valid event names"],
-        ).to_dict()
+    session_obj = await require_session(year, event, session)
 
     laps = session_obj.laps
     if driver is not None:
         laps = laps.pick_drivers(driver)
         if len(laps) == 0:
-            return FastF1MCPError(
+            raise FastF1MCPError(
                 ErrorCode.DRIVER_NOT_FOUND,
                 f"No laps found for driver '{driver}'",
                 suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
-            ).to_dict()
+            )
 
     results = []
     for drv in laps["Driver"].dropna().unique():
@@ -487,6 +453,7 @@ async def get_sector_times(
         results.append(
             {
                 "driver": drv,
+                "_theoreticalRaw": theoretical_best,
                 "bestS1": str(best_s1) if best_s1 is not None else None,
                 "bestS2": str(best_s2) if best_s2 is not None else None,
                 "bestS3": str(best_s3) if best_s3 is not None else None,
@@ -498,8 +465,9 @@ async def get_sector_times(
             }
         )
 
-    # Sort by theoretical best ascending (fastest first); push None to end
-    results.sort(
-        key=lambda x: (x["theoreticalBest"] is None, x["theoreticalBest"] or "")
-    )
+    # Sort by raw Timedelta ascending (fastest first); push None to end.
+    _max_td = pd.Timedelta.max
+    results.sort(key=lambda x: x["_theoreticalRaw"] or _max_td)
+    for r in results:
+        del r["_theoreticalRaw"]
     return results

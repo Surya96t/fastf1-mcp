@@ -1,5 +1,7 @@
+import sys
 from pathlib import Path
 
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,4 +22,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
 
-settings = Settings()
+try:
+    settings = Settings()
+except ValidationError as e:
+    print(
+        "fastf1-mcp: invalid configuration. "
+        "Check your FASTF1_MCP_* environment variables.\n"
+        f"{e}",
+        file=sys.stderr,
+    )
+    sys.exit(2)

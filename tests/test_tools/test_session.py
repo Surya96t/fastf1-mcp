@@ -11,7 +11,7 @@ from fastf1_mcp.utils.errors import ErrorCode
 async def test_get_session_results_valid(mock_session):
     """Valid year returns ordered classification with expected fields."""
     with patch(
-        "fastf1_mcp.tools.session.session_manager.get_session",
+        "fastf1_mcp.utils.session_loader.session_manager.get_session",
         new_callable=AsyncMock,
         return_value=mock_session,
     ):
@@ -39,7 +39,7 @@ async def test_get_session_results_pre_2018_raises():
 async def test_get_race_pace_excludes_sc(mock_session):
     """With exclude_sc_laps=True, pick_track_status is called for every driver."""
     with patch(
-        "fastf1_mcp.tools.session.session_manager.get_session",
+        "fastf1_mcp.utils.session_loader.session_manager.get_session",
         new_callable=AsyncMock,
         return_value=mock_session,
     ):

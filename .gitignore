@@ -6,6 +6,9 @@ dist/
 wheels/
 *.egg-info
 
+# hatch-vcs-generated version file
+src/fastf1_mcp/_version.py
+
 # Virtual environments
 .venv
 

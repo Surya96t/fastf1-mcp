@@ -16,7 +16,12 @@ class ErrorCode(Enum):
 class FastF1MCPError(Exception):
     """Base exception for FastF1 MCP errors."""
 
-    def __init__(self, code: ErrorCode, message: str, suggestions: list[str] = None):
+    def __init__(
+        self,
+        code: ErrorCode,
+        message: str,
+        suggestions: list[str] | None = None,
+    ):
         self.code = code
         self.message = message
         self.suggestions = suggestions or []

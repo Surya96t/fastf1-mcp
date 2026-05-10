@@ -151,7 +151,7 @@ async def get_driver_info(
             ergast.get_driver_info,
             season=year,
             driver=driver_id,
-            limit=100,
+            limit=1000,
         ),
     )
 

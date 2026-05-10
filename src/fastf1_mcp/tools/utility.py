@@ -137,7 +137,7 @@ async def list_drivers(
     try:
         result = await loop.run_in_executor(
             None,
-            partial(ergast.get_driver_info, season=year, limit=30),
+            partial(ergast.get_driver_info, season=year, limit=1000),
         )
     except Exception as e:
         logger.error(f"Failed to fetch drivers for {year}: {e}")
@@ -197,15 +197,23 @@ async def get_cache_status() -> dict:
     from ..config import settings
 
     cache_path = settings.fastf1_cache_path
+    status["fastf1_cache_path"] = str(cache_path)
+
     if cache_path.exists():
-        total_size = sum(f.stat().st_size for f in cache_path.rglob("*") if f.is_file())
-        status["fastf1_cache_path"] = str(cache_path)
+        # Recursive scan can take seconds on multi-GB caches; run in executor
+        # so we don't block the event loop.
+        loop = asyncio.get_running_loop()
+        total_size = await loop.run_in_executor(None, _disk_cache_size, cache_path)
         status["fastf1_cache_size_mb"] = round(total_size / (1024 * 1024), 2)
     else:
-        status["fastf1_cache_path"] = str(cache_path)
         status["fastf1_cache_size_mb"] = 0.0
 
     return status
+
+
+def _disk_cache_size(path) -> int:
+    """Sum file sizes under path. Blocking; run in an executor."""
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
 async def clear_cache(
@@ -231,6 +239,15 @@ async def clear_cache(
         (raw timing files) is preserved and unaffected.
     """
     logger.info(f"clear_cache: {year=}, {event=}")
+
+    if event is not None and year is None:
+        return FastF1MCPError(
+            ErrorCode.INVALID_PARAMETER,
+            "clear_cache: event filter requires year to be set",
+            suggestions=[
+                "Pass year alongside event, e.g. clear_cache(2024, 'Monaco')",
+            ],
+        ).to_dict()
 
     cleared = session_manager.clear_cache(year, event)
     remaining = len(session_manager._cache)

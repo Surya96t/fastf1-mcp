@@ -140,6 +140,79 @@ async def test_clear_cache_all():
 
 
 @pytest.mark.asyncio
+async def test_concurrent_loads_dedupe_via_lock():
+    """Two concurrent get_session() calls for the same key must call fastf1.get_session once."""
+    import asyncio
+
+    mock_session = _make_mock_session()
+    load_started = asyncio.Event()
+    release_load = asyncio.Event()
+
+    def slow_get_session(*args, **kwargs):
+        # Signal the test that we're inside the load, then block until released.
+        load_started.set()
+        # run_in_executor offloads to a thread, so we can't await here — we
+        # have to spin until the asyncio Event is set from the main task.
+        import time
+
+        start = time.monotonic()
+        while not release_load.is_set() and time.monotonic() - start < 2.0:
+            time.sleep(0.005)
+        return mock_session
+
+    with patch(
+        "fastf1_mcp.session_manager.fastf1.get_session", side_effect=slow_get_session
+    ) as mock_get:
+        manager = SessionManager(max_sessions=5)
+
+        # First call begins loading and blocks; second call should wait on the lock.
+        first = asyncio.create_task(manager.get_session(2024, "Monaco", "R"))
+        await load_started.wait()
+        second = asyncio.create_task(manager.get_session(2024, "Monaco", "R"))
+
+        # Give the second task a moment to reach the lock — if dedup is broken
+        # it would call fastf1.get_session a second time.
+        await asyncio.sleep(0.05)
+
+        release_load.set()
+        s1, s2 = await asyncio.gather(first, second)
+
+        assert s1 is s2
+        assert mock_get.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_clear_cache_clears_locks_dict():
+    """M6 regression: clear_cache() must drop entries from _locks too."""
+    mock_session = _make_mock_session()
+    with patch(
+        "fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session
+    ):
+        manager = SessionManager(max_sessions=5)
+        await manager.get_session(2024, "Monaco", "R")
+        assert len(manager._locks) > 0
+
+        manager.clear_cache()
+        assert len(manager._locks) == 0
+
+
+@pytest.mark.asyncio
+async def test_lru_eviction_drops_lock_entry():
+    """M6 regression: LRU eviction must also remove the per-session lock."""
+    mock_session = _make_mock_session()
+    with patch(
+        "fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session
+    ):
+        manager = SessionManager(max_sessions=2)
+        await manager.get_session(2024, "Bahrain", "R")
+        await manager.get_session(2024, "Jeddah", "R")
+        await manager.get_session(2024, "Monaco", "R")  # evicts Bahrain
+
+        assert "2024:Bahrain:R" not in manager._cache
+        assert "2024:Bahrain:R" not in manager._locks
+
+
+@pytest.mark.asyncio
 async def test_clear_cache_by_year():
     """clear_cache(year=2024) only removes sessions for that year."""
     mock_session = _make_mock_session()
