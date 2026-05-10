@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import partial
 from typing import Any
@@ -22,6 +22,8 @@ class CachedSession:
     year: int
     event: str
     session_type: str
+    # What FastF1 Session.load() flags have been satisfied for this session.
+    loaded: dict[str, bool] = field(default_factory=dict)
 
 
 class SessionManager:
@@ -77,23 +79,57 @@ class SessionManager:
             Loaded FastF1 Session object
         """
         key = self._cache_key(year, event, session_type)
+        requested = {
+            "laps": load_laps,
+            "telemetry": load_telemetry,
+            "weather": load_weather,
+            "messages": load_messages,
+        }
 
-        # Check cache first
-        if key in self._cache:
+        # Cache hit — return immediately if the cached session already has
+        # everything we need; otherwise fall through to a lock-protected
+        # upgrade load.
+        if key in self._cache and not self._needs_upgrade(self._cache[key], requested):
             logger.debug(f"Cache hit: {key}")
             self._cache.move_to_end(key)
             return self._cache[key].session
 
-        # Acquire lock for this specific session
         lock = await self._get_lock(key)
         async with lock:
-            # Double-check after acquiring lock
             if key in self._cache:
+                cached = self._cache[key]
+                if not self._needs_upgrade(cached, requested):
+                    self._cache.move_to_end(key)
+                    return cached.session
+
+                # Upgrade in place: load only the flags that aren't satisfied.
+                # FastF1's Session.load() is idempotent for already-loaded
+                # data, but we still pass only the missing flags to avoid
+                # ambiguity. Any flags already loaded stay loaded.
+                missing = {
+                    k: True
+                    for k, v in requested.items()
+                    if v and not cached.loaded.get(k, False)
+                }
+                logger.info(
+                    f"Upgrading cached session {key}: loading {sorted(missing.keys())}"
+                )
+                loop = asyncio.get_running_loop()
+                load_func = partial(
+                    cached.session.load,
+                    laps=missing.get("laps", False),
+                    telemetry=missing.get("telemetry", False),
+                    weather=missing.get("weather", False),
+                    messages=missing.get("messages", False),
+                )
+                await loop.run_in_executor(None, load_func)
+
+                for k in missing:
+                    cached.loaded[k] = True
                 self._cache.move_to_end(key)
-                return self._cache[key].session
+                return cached.session
 
             logger.info(f"Loading session: {year} {event} {session_type}")
-
             loop = asyncio.get_running_loop()
 
             session = await loop.run_in_executor(
@@ -124,9 +160,15 @@ class SessionManager:
                 year=year,
                 event=str(event),
                 session_type=session_type,
+                loaded={k: v for k, v in requested.items() if v},
             )
 
             return session
+
+    @staticmethod
+    def _needs_upgrade(cached: CachedSession, requested: dict[str, bool]) -> bool:
+        """True if the cached session is missing any flag the caller needs."""
+        return any(v and not cached.loaded.get(k, False) for k, v in requested.items())
 
     async def get_session_with_telemetry(
         self,

@@ -140,6 +140,58 @@ async def test_clear_cache_all():
 
 
 @pytest.mark.asyncio
+async def test_cache_upgrades_when_more_data_requested():
+    """
+    First call requests load_laps=False (e.g. get_session_results), then a
+    second call requests load_laps=True (e.g. get_pit_stops). The cached
+    session must be upgraded — calling session.load(laps=True) — instead of
+    returning a session with un-loaded laps.
+
+    Regression for the "data has not been loaded yet" error users hit when
+    asking follow-up questions in the same chat.
+    """
+    mock_session = _make_mock_session()
+    with patch(
+        "fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session
+    ):
+        manager = SessionManager(max_sessions=5)
+
+        # Step 1: get_session_results-style call (laps not needed)
+        await manager.get_session(2026, "Miami", "R", load_laps=False)
+        first_load_call = mock_session.load.call_args
+        assert first_load_call.kwargs["laps"] is False
+
+        # Step 2: get_pit_stops-style call (laps required)
+        await manager.get_session(2026, "Miami", "R", load_laps=True)
+
+        # session.load should have been invoked a second time with laps=True
+        assert mock_session.load.call_count == 2
+        upgrade_call = mock_session.load.call_args
+        assert upgrade_call.kwargs["laps"] is True
+
+        # The cached session should now record laps as loaded
+        cached = manager._cache["2026:Miami:R"]
+        assert cached.loaded["laps"] is True
+
+
+@pytest.mark.asyncio
+async def test_cache_no_upgrade_when_already_satisfied():
+    """If a cached session already has everything requested, no reload."""
+    mock_session = _make_mock_session()
+    with patch(
+        "fastf1_mcp.session_manager.fastf1.get_session", return_value=mock_session
+    ):
+        manager = SessionManager(max_sessions=5)
+
+        await manager.get_session(2026, "Miami", "R", load_laps=True)
+        await manager.get_session(2026, "Miami", "R", load_laps=False)
+        await manager.get_session(2026, "Miami", "R", load_laps=True)
+
+        # Only the first call should have triggered load()
+        assert mock_session.load.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_concurrent_loads_dedupe_via_lock():
     """Two concurrent get_session() calls for the same key must call fastf1.get_session once."""
     import asyncio
