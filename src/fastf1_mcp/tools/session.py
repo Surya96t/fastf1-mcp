@@ -2,8 +2,15 @@ import logging
 
 import pandas as pd
 
-from ..utils.converters import laps_to_json, results_to_json
+from ..utils.converters import (
+    build_driver_lookup,
+    lap_times_summary,
+    laps_to_json,
+    results_to_json,
+    stint_analysis_summary,
+)
 from ..utils.errors import ErrorCode, FastF1MCPError
+from ..utils.exports import apply_export
 from ..utils.session_loader import require_session, tool_handler
 
 logger = logging.getLogger(__name__)
@@ -53,12 +60,20 @@ async def get_lap_times(
     session: str,
     driver: str,
     include_deleted: bool = False,
-) -> list[dict]:
+    export_path: bool | str = False,
+) -> dict:
     """
     Get all lap times for a driver in a session.
 
     Data source: FastF1 Live Timing
     Coverage: 2018-present
+
+    Set `export_path=True` when the user mentions data analysis, notebooks,
+    pandas, ML, "save as CSV", "export the data", or any downstream
+    processing — the full per-lap array is then written to a CSV file the
+    user can open directly. Large responses (>50 laps) also auto-export so
+    the user always gets a real file path in the project rather than the
+    MCP client silently spilling the response to a temp file.
 
     Args:
         year: Season year (2018+)
@@ -66,20 +81,37 @@ async def get_lap_times(
         session: Session type (R, Q, S, FP1, FP2, FP3)
         driver: Driver code (e.g., "VER") or number (e.g., "1")
         include_deleted: Include deleted lap times (default False)
+        export_path: If True, write the full per-lap array to a CSV in the
+                     configured export directory (default `./fastf1-exports/`,
+                     override via FASTF1_MCP_EXPORT_DIR) and omit `laps` from
+                     the response. Pass a string for a custom directory or
+                     `.csv` file path. The server also auto-exports when
+                     the lap count exceeds FASTF1_MCP_AUTO_EXPORT_ROWS
+                     (default 50).
 
     Returns:
-        List of laps with: lapNumber, lapTime, sector1, sector2, sector3,
-        compound, tyreLife, isPersonalBest, deleted
+        Default (no export):
+        {
+            "driver": "VER", "fullName": "Max Verstappen",
+            "teamName": "Red Bull Racing",
+            "summary": {...},
+            "laps": [{"lapNumber": 1, "lapTime": "0:01:30.456", ...}, ...]
+        }
 
-    Example:
-        get_lap_times(2024, "Monaco", "R", "VER") → [
-            {"lapNumber": 1, "lapTime": "0:01:30.456", "compound": "MEDIUM", ...},
-            ...
-        ]
+        With export_path:
+        {
+            "driver": "VER", "fullName": ..., "teamName": ...,
+            "summary": {...},
+            "exportPath": "/abs/path/to/get_lap_times_2024_monaco_r_ver_<ts>.csv",
+            "rowCount": 52
+        }
 
     Note:
         Deleted laps (e.g., track limits violations) are excluded by default.
         Set include_deleted=True to include them.
+        `summary` lets a caller answer fastest/avg/compound questions without
+        re-parsing the full per-lap array. Use `export_path=True` to grab the
+        full dataset as CSV for downstream analysis / ML work.
     """
     logger.info(
         f"get_lap_times: {year=}, {event=}, {session=}, {driver=}, {include_deleted=}"
@@ -97,7 +129,28 @@ async def get_lap_times(
     if not include_deleted and "Deleted" in laps.columns:
         laps = laps[~laps["Deleted"].fillna(False)]
 
-    return laps_to_json(laps)
+    laps_json = laps_to_json(laps)
+
+    # Driver enrichment via session.results lookup (input `driver` may be a
+    # code OR a number).
+    driver_lookup = build_driver_lookup(session_obj)
+    info = driver_lookup.get(driver, {})
+
+    response: dict = {
+        "driver": info.get("driverCode") or driver,
+        "fullName": info.get("fullName", ""),
+        "teamName": info.get("teamName", ""),
+        "summary": lap_times_summary(laps_json),
+    }
+    apply_export(
+        response,
+        laps_json,
+        bulk_key="laps",
+        export_path=export_path,
+        tool="get_lap_times",
+        parts=[year, event, session, info.get("driverCode") or driver],
+    )
+    return response
 
 
 @tool_handler
@@ -165,7 +218,7 @@ async def get_race_pace(
     exclude_sc_laps: bool = True,
     exclude_pit_laps: bool = True,
     min_laps: int = 10,
-) -> list[dict]:
+) -> dict:
     """
     Calculate average race pace for all drivers.
 
@@ -181,25 +234,31 @@ async def get_race_pace(
         min_laps: Minimum valid laps required to include a driver (default 10)
 
     Returns:
-        Drivers ranked by average pace: driver, avgLapTime, lapCount,
-        deltaToFastestSec, fastestLap, slowestLap
-
-    Example:
-        get_race_pace(2024, "Monaco") → [
-            {"driver": "LEC", "avgLapTime": "0:01:15.678",
-             "lapCount": 52, "deltaToFastestSec": 0.0, ...},
-            ...
-        ]
+        {
+            "filters": {
+                "excludeFirstLaps": 2, "excludeSafetyCarLaps": true,
+                "excludePitLaps": true, "minLaps": 10
+            },
+            "drivers": [
+                {"driver": "LEC", "fullName": "Charles Leclerc",
+                 "teamName": "Ferrari", "avgLapTime": "0:01:15.678",
+                 "lapCount": 52, "deltaToFastestSec": 0.0, ...},
+                ...
+            ]
+        }
 
     Note:
         SC/VSC filter uses track status "1" (green flag only).
         Drivers with fewer than min_laps valid laps are excluded.
+        The `filters` block echoes the applied filters so the caller can
+        clearly state which conditions the pace was computed under.
     """
     logger.info(
         f"get_race_pace: {year=}, {event=}, {exclude_first_laps=}, "
         f"{exclude_sc_laps=}, {exclude_pit_laps=}, {min_laps=}"
     )
     session_obj = await require_session(year, event, "R")
+    driver_lookup = build_driver_lookup(session_obj)
 
     pace_data = []
 
@@ -225,10 +284,13 @@ async def get_race_pace(
             continue
 
         avg_time = lap_times.mean()
+        info = driver_lookup.get(driver, {})
 
         pace_data.append(
             {
-                "driver": driver,
+                "driver": info.get("driverCode") or driver,
+                "fullName": info.get("fullName", ""),
+                "teamName": info.get("teamName", ""),
                 "_avgRaw": avg_time,
                 "avgLapTime": str(avg_time),
                 "lapCount": len(lap_times),
@@ -248,7 +310,17 @@ async def get_race_pace(
             )
             del item["_avgRaw"]
 
-    return pace_data
+    # Echo filter context so callers can disambiguate paces computed under
+    # different settings (e.g. SC-laps excluded vs included).
+    return {
+        "filters": {
+            "excludeFirstLaps": exclude_first_laps,
+            "excludeSafetyCarLaps": exclude_sc_laps,
+            "excludePitLaps": exclude_pit_laps,
+            "minLaps": min_laps,
+        },
+        "drivers": pace_data,
+    }
 
 
 @tool_handler
@@ -256,35 +328,56 @@ async def get_stint_analysis(
     year: int,
     event: str | int,
     driver: str | None = None,
-) -> list[dict]:
+    export_path: bool | str = False,
+) -> dict:
     """
     Analyze tire stints for a race.
 
     Data source: FastF1 Live Timing
     Coverage: 2018-present
 
+    Set `export_path=True` when the user mentions data analysis, notebooks,
+    pandas, ML, "save as CSV", "export the strategy data", or any downstream
+    processing — the full per-stint array is written to CSV. Large
+    responses (>50 stints, typical for full-grid races) also auto-export.
+
     Args:
         year: Season year (2018+)
         event: Race name or round number
         driver: Optional driver code to filter (default: all drivers)
+        export_path: If True, write the full per-stint array to a CSV in
+                     the configured export directory (default
+                     `./fastf1-exports/`, override via FASTF1_MCP_EXPORT_DIR)
+                     and omit `stints` from the response. Pass a string for
+                     a custom directory or `.csv` file path. The server
+                     also auto-exports when the stint count exceeds
+                     FASTF1_MCP_AUTO_EXPORT_ROWS (default 50).
 
     Returns:
-        Stints with: driver, stintNumber, compound, startLap, endLap,
-        lapCount, minLapTime, avgLapTime, maxLapTime
+        Default (no export):
+        {
+            "summary": {...},
+            "stints": [{"driver": "LEC", "stintNumber": 1, ...}, ...]
+        }
 
-    Example:
-        get_stint_analysis(2024, "Monaco", "LEC") → [
-            {"driver": "LEC", "stintNumber": 1, "compound": "MEDIUM",
-             "startLap": 1, "endLap": 28, "lapCount": 28, ...},
-            ...
-        ]
+        With export_path:
+        {
+            "summary": {...},
+            "exportPath": "/abs/path/to/get_stint_analysis_<...>.csv",
+            "rowCount": 45
+        }
 
     Note:
         Only accurate laps are included in pace calculations.
         Stint numbers match FastF1's internal stint counter.
+        Phantom lap-1 stints (single-lap entries with no recorded lap time,
+        paired with the lap-1 pit-stop artifact) are filtered out.
+        The `summary.strategies` array gives the 1-stop / 2-stop / compound
+        sequence per driver in a compact form.
     """
     logger.info(f"get_stint_analysis: {year=}, {event=}, {driver=}")
     session_obj = await require_session(year, event, "R")
+    driver_lookup = build_driver_lookup(session_obj)
 
     laps = session_obj.laps
     if driver is not None:
@@ -314,13 +407,20 @@ async def get_stint_analysis(
                     else "UNKNOWN"
                 )
 
+            start_lap = int(stint_laps["LapNumber"].min())
+            end_lap = int(stint_laps["LapNumber"].max())
+            lap_count = len(stint_laps)
+
+            info = driver_lookup.get(drv, {})
             entry: dict = {
-                "driver": drv,
+                "driver": info.get("driverCode") or drv,
+                "fullName": info.get("fullName", ""),
+                "teamName": info.get("teamName", ""),
                 "stintNumber": int(stint_num),
                 "compound": compound,
-                "startLap": int(stint_laps["LapNumber"].min()),
-                "endLap": int(stint_laps["LapNumber"].max()),
-                "lapCount": len(stint_laps),
+                "startLap": start_lap,
+                "endLap": end_lap,
+                "lapCount": lap_count,
             }
 
             if len(accurate_laps) > 0:
@@ -333,10 +433,34 @@ async def get_stint_analysis(
                 entry["avgLapTime"] = None
                 entry["maxLapTime"] = None
 
+            # Skip the phantom lap-1 stint that pairs with the lap-1 pit-stop
+            # artifact: a single-lap stint starting at lap 1 with no recorded
+            # lap time at all. Real 1-lap stints (e.g. early retirement) still
+            # have a LapTime in the row, even if not flagged accurate.
+            has_any_laptime = (
+                "LapTime" in stint_laps.columns and stint_laps["LapTime"].notna().any()
+            )
+            is_phantom = start_lap == 1 and lap_count == 1 and not has_any_laptime
+            if is_phantom:
+                logger.debug(
+                    f"Skipping phantom lap-1 stint: driver={drv} compound={compound}"
+                )
+                continue
+
             results.append(entry)
 
     results.sort(key=lambda x: (x["driver"], x["stintNumber"]))
-    return results
+
+    response: dict = {"summary": stint_analysis_summary(results)}
+    apply_export(
+        response,
+        results,
+        bulk_key="stints",
+        export_path=export_path,
+        tool="get_stint_analysis",
+        parts=[year, event, driver],
+    )
+    return response
 
 
 @tool_handler
@@ -355,24 +479,35 @@ async def get_pit_stops(
         event: Race name or round number
 
     Returns:
-        Pit stops sorted by lap: driver, lap, stopNumber, duration,
-        tyreFrom, tyreTo
+        Pit stops sorted by lap: driver (code), fullName, teamName, lap,
+        stopNumber, duration, tyreFrom, tyreTo
 
     Example:
         get_pit_stops(2024, "Monaco") → [
-            {"driver": "LEC", "lap": 28, "stopNumber": 1,
+            {"driver": "LEC", "fullName": "Charles Leclerc",
+             "teamName": "Ferrari", "lap": 28, "stopNumber": 1,
              "duration": 23.4, "tyreFrom": "MEDIUM", "tyreTo": "HARD"},
             ...
         ]
 
     Note:
         Duration is calculated from PitInTime (end of in-lap) to
-        PitOutTime (start of out-lap), in seconds.
+        PitOutTime (start of out-lap), in seconds. Stops with implausibly
+        long durations (>120s) are filtered as FastF1 data artifacts —
+        commonly a phantom lap-1 entry tied to session start, not a real
+        pit stop.
     """
     logger.info(f"get_pit_stops: {year=}, {event=}")
     session_obj = await require_session(year, event, "R")
+    driver_lookup = build_driver_lookup(session_obj)
 
     pit_stops = []
+
+    # Real F1 pit stops are well under a minute even in disaster cases.
+    # FastF1 occasionally records a lap-1 PitInTime tied to the session
+    # start (formation lap / pit-lane start) which yields a multi-thousand
+    # second "stop" — filter those artifacts out by duration.
+    MAX_PLAUSIBLE_PIT_DURATION_SEC = 120.0
 
     for driver in session_obj.drivers:
         driver_laps = session_obj.laps.pick_drivers(driver)
@@ -383,7 +518,8 @@ async def get_pit_stops(
         # Order this driver's stops by lap so stopNumber is well-defined.
         in_laps_sorted = in_laps.sort_values("LapNumber")
 
-        for stop_idx, (_, in_lap) in enumerate(in_laps_sorted.iterrows(), start=1):
+        stop_idx = 0
+        for _, in_lap in in_laps_sorted.iterrows():
             lap_num = in_lap["LapNumber"]
             if pd.isna(lap_num):
                 continue
@@ -401,9 +537,20 @@ async def get_pit_stops(
                     duration = round((pit_out - pit_in).total_seconds(), 1)
                 compound_to = out_lap.get("Compound")
 
+            if duration is not None and duration > MAX_PLAUSIBLE_PIT_DURATION_SEC:
+                logger.debug(
+                    f"Skipping pit-stop artifact: driver={driver} "
+                    f"lap={int(lap_num)} duration={duration}s"
+                )
+                continue
+
+            stop_idx += 1
+            info = driver_lookup.get(driver, {})
             pit_stops.append(
                 {
-                    "driver": driver,
+                    "driver": info.get("driverCode") or driver,
+                    "fullName": info.get("fullName", ""),
+                    "teamName": info.get("teamName", ""),
                     "lap": int(lap_num),
                     "stopNumber": stop_idx,
                     "duration": duration,

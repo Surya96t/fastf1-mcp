@@ -4,8 +4,13 @@ import numpy as np
 import pandas as pd
 
 from ..config import settings
-from ..utils.converters import telemetry_to_json
+from ..utils.converters import (
+    build_driver_lookup,
+    telemetry_summary,
+    telemetry_to_json,
+)
 from ..utils.errors import ErrorCode, FastF1MCPError
+from ..utils.exports import apply_export
 from ..utils.session_loader import require_session, tool_handler
 
 logger = logging.getLogger(__name__)
@@ -81,12 +86,19 @@ async def get_lap_telemetry(
     driver: str,
     lap: int | str = "fastest",
     sample_size: int = 200,
+    export_path: bool | str = False,
 ) -> dict:
     """
     Get telemetry data for a specific lap.
 
     Data source: FastF1 Live Timing
     Coverage: 2018-present
+
+    Set `export_path=True` when the user mentions data analysis, notebooks,
+    pandas, ML, "plot the telemetry", "save the trace", or downstream
+    processing — the sampled per-distance trace is written to CSV.
+    Telemetry responses with the default 200 sample points also auto-export
+    so the user always gets a real file path in the project.
 
     Args:
         year: Season year (2018+)
@@ -95,12 +107,27 @@ async def get_lap_telemetry(
         driver: Driver code (e.g., "VER")
         lap: Lap number or "fastest" (default)
         sample_size: Number of telemetry points to return (default 200, max 500)
+        export_path: If True, write the sampled `data` array to a CSV in
+                     the configured export directory (default
+                     `./fastf1-exports/`, override via FASTF1_MCP_EXPORT_DIR)
+                     and omit `data` from the response. Pass a string for a
+                     custom directory or `.csv` file path. The server also
+                     auto-exports when `data` would exceed
+                     FASTF1_MCP_AUTO_EXPORT_ROWS rows (default 50). Use a
+                     larger sample_size if you want more detail in the
+                     exported file.
 
     Returns:
         {
             "driver": "VER",
             "lapNumber": 42,
             "lapTime": "0:01:23.456",
+            "summary": {
+                "samplePoints": 200, "maxSpeedKph": 327.5,
+                "minSpeedKph": 80.2, "avgSpeedKph": 218.1,
+                "maxGear": 8, "brakingZones": 7,
+                "fullThrottlePct": 64.5
+            },
             "data": [
                 {"distance": 0.0, "speed": 280.0, "throttle": 95.0,
                  "brake": false, "gear": 7, "drs": 0},
@@ -115,6 +142,8 @@ async def get_lap_telemetry(
     Note:
         Raw telemetry has 5000+ points per lap. Response is sampled to
         sample_size evenly-spaced distance points (capped at 500).
+        `summary` lets a caller answer top-speed / braking-zone questions
+        without parsing the full per-distance array.
     """
     logger.info(
         f"get_lap_telemetry: {year=}, {event=}, {session=}, {driver=}, {lap=}, {sample_size=}"
@@ -139,7 +168,9 @@ async def get_lap_telemetry(
             f"Telemetry unavailable for {driver} lap {lap}: {e}",
         ) from e
 
-    return {
+    data = telemetry_to_json(telemetry, sample_size)
+
+    response: dict = {
         "driver": driver,
         "lapNumber": int(target_lap["LapNumber"])
         if pd.notna(target_lap.get("LapNumber"))
@@ -147,8 +178,23 @@ async def get_lap_telemetry(
         "lapTime": str(target_lap["LapTime"])
         if pd.notna(target_lap.get("LapTime"))
         else None,
-        "data": telemetry_to_json(telemetry, sample_size),
+        "summary": telemetry_summary(data),
     }
+    apply_export(
+        response,
+        data,
+        bulk_key="data",
+        export_path=export_path,
+        tool="get_lap_telemetry",
+        parts=[
+            year,
+            event,
+            session,
+            driver,
+            f"lap-{response['lapNumber']}" if response["lapNumber"] else lap,
+        ],
+    )
+    return response
 
 
 @tool_handler
@@ -160,12 +206,18 @@ async def compare_telemetry(
     driver2: str,
     lap: int | str = "fastest",
     sample_size: int = 200,
+    export_path: bool | str = False,
 ) -> dict:
     """
     Compare telemetry between two drivers on the same session.
 
     Data source: FastF1 Live Timing
     Coverage: 2018-present
+
+    Set `export_path=True` when the user wants the comparison data for
+    analysis (notebook, pandas, ML, "plot where one driver gains time",
+    "save the comparison"). Comparisons at the default 200 sample size
+    also auto-export.
 
     Args:
         year: Season year (2018+)
@@ -175,6 +227,11 @@ async def compare_telemetry(
         driver2: Second driver code (e.g., "LEC")
         lap: Lap number or "fastest" — applied independently to each driver
         sample_size: Telemetry points per driver (default 200, max 500)
+        export_path: If True, write the per-distance `comparison` array to
+                     a CSV in the configured export directory (default
+                     `./fastf1-exports/`, override via FASTF1_MCP_EXPORT_DIR)
+                     and omit `comparison` from the response. Pass a string
+                     for a custom directory or `.csv` file path.
 
     Returns:
         {
@@ -192,7 +249,9 @@ async def compare_telemetry(
                     "S1": {"driver1": "0:00:28.123", "driver2": "0:00:28.456", "deltaSec": -0.333},
                     "S2": {...},
                     "S3": {...}
-                }
+                },
+                "driver1Telemetry": {"maxSpeedKph": 325.0, "brakingZones": 7, ...},
+                "driver2Telemetry": {"maxSpeedKph": 320.5, "brakingZones": 8, ...}
             }
         }
 
@@ -271,6 +330,16 @@ async def compare_telemetry(
         for i in range(sample_size)
     ]
 
+    # Per-driver telemetry summary — built from the original telemetry frames
+    # (not the aligned comparison grid) so braking-zone and max-speed counts
+    # reflect each driver's actual lap.
+    def _summary_for(tel: pd.DataFrame) -> dict:
+        points = telemetry_to_json(tel, sample_size)
+        return telemetry_summary(points)
+
+    driver1_summary = _summary_for(tel1)
+    driver2_summary = _summary_for(tel2)
+
     t1 = lap1.get("LapTime")
     t2 = lap2.get("LapTime")
     lap_time_delta = None
@@ -292,7 +361,7 @@ async def compare_telemetry(
                 "deltaSec": round((v1 - v2).total_seconds(), 3),
             }
 
-    return {
+    response: dict = {
         "driver1": {
             "code": driver1,
             "lapNumber": int(lap1["LapNumber"])
@@ -307,13 +376,24 @@ async def compare_telemetry(
             else None,
             "lapTime": str(t2) if pd.notna(t2) else None,
         },
-        "comparison": comparison,
         "summary": {
             "lapTimeDeltaSec": lap_time_delta,
             "maxSpeedDelta": round(float(np.max(np.abs(speed1 - speed2))), 1),
             "sectors": sectors,
+            "driver1Telemetry": driver1_summary,
+            "driver2Telemetry": driver2_summary,
         },
     }
+
+    apply_export(
+        response,
+        comparison,
+        bulk_key="comparison",
+        export_path=export_path,
+        tool="compare_telemetry",
+        parts=[year, event, session, f"{driver1}-vs-{driver2}"],
+    )
+    return response
 
 
 @tool_handler
@@ -334,48 +414,98 @@ async def get_speed_trap_data(
         session: Session type (R, Q, S, FP1, FP2, FP3)
 
     Returns:
-        Drivers sorted by speed trap speed (descending):
-        driver, speedTrap, speedFL, speedI1, speedI2
+        {
+            "source": "results" | "laps",
+            "drivers": [
+                {"driver": "VER", "fullName": "Max Verstappen",
+                 "teamName": "Red Bull Racing", "speedTrap": 298.5,
+                 "speedFL": 187.2, "speedI1": 245.0, "speedI2": 268.5},
+                ...
+            ]
+        }
 
     Example:
-        get_speed_trap_data(2024, "Monaco", "Q") → [
-            {"driver": "VER", "speedTrap": 298.5, "speedFL": 187.2, ...},
-            ...
-        ]
+        get_speed_trap_data(2024, "Monza", "Q") → {"source": "results", ...}
 
     Note:
         SpeedST = official speed trap measurement.
         SpeedFL = speed at the finish line.
         SpeedI1/I2 = sector intermediate speed measurements.
         Values are in km/h.
+
+        FastF1 publishes per-driver speed columns on `session.results`, but
+        for many sessions those columns are entirely empty. When the
+        results-level data is missing, we fall back to the per-lap max
+        across `session.laps` for the same columns. `source` indicates
+        which path produced the response.
     """
     logger.info(f"get_speed_trap_data: {year=}, {event=}, {session=}")
-    session_obj = await require_session(year, event, session, load_laps=False)
+    # Laps are required for the fallback path.
+    session_obj = await require_session(year, event, session)
+    driver_lookup = build_driver_lookup(session_obj)
 
-    results = session_obj.results
-    rows = []
-    for _, row in results.iterrows():
-        rows.append(
-            {
-                "driver": row.get("Abbreviation", ""),
-                "speedTrap": float(row["SpeedST"])
-                if pd.notna(row.get("SpeedST"))
-                else None,
-                "speedFL": float(row["SpeedFL"])
-                if pd.notna(row.get("SpeedFL"))
-                else None,
-                "speedI1": float(row["SpeedI1"])
-                if pd.notna(row.get("SpeedI1"))
-                else None,
-                "speedI2": float(row["SpeedI2"])
-                if pd.notna(row.get("SpeedI2"))
-                else None,
-            }
+    SPEED_COLS = ("SpeedST", "SpeedFL", "SpeedI1", "SpeedI2")
+    TOOL_KEYS = ("speedTrap", "speedFL", "speedI1", "speedI2")
+
+    def _enrich(code: str) -> dict:
+        info = driver_lookup.get(code, {})
+        return {
+            "driver": info.get("driverCode") or code,
+            "fullName": info.get("fullName", ""),
+            "teamName": info.get("teamName", ""),
+        }
+
+    results = getattr(session_obj, "results", None)
+    results_have_speeds = (
+        results is not None
+        and hasattr(results, "columns")
+        and any(
+            col in results.columns and results[col].notna().any() for col in SPEED_COLS
         )
+    )
+
+    rows: list[dict] = []
+    source = "results" if results_have_speeds else "laps"
+
+    if results_have_speeds:
+        for _, row in results.iterrows():
+            code = row.get("Abbreviation", "") or ""
+            entry = _enrich(code)
+            for tool_key, col in zip(TOOL_KEYS, SPEED_COLS):
+                entry[tool_key] = float(row[col]) if pd.notna(row.get(col)) else None
+            rows.append(entry)
+    else:
+        # Fallback: per-driver max across the laps DataFrame.
+        laps = getattr(session_obj, "laps", None)
+        if (
+            laps is None
+            or not hasattr(laps, "columns")
+            or "Driver" not in laps.columns
+            or not any(col in laps.columns for col in SPEED_COLS)
+        ):
+            raise FastF1MCPError(
+                ErrorCode.DATA_UNAVAILABLE,
+                f"Speed trap data is unavailable for {year} {event} {session}.",
+                suggestions=[
+                    "Speed measurements are sometimes not published for "
+                    "certain sessions or older events.",
+                ],
+            )
+
+        for drv in laps["Driver"].dropna().unique():
+            drv_laps = laps[laps["Driver"] == drv]
+            entry = _enrich(drv)
+            for tool_key, col in zip(TOOL_KEYS, SPEED_COLS):
+                if col in drv_laps.columns:
+                    series = drv_laps[col].dropna()
+                    entry[tool_key] = float(series.max()) if len(series) > 0 else None
+                else:
+                    entry[tool_key] = None
+            rows.append(entry)
 
     # Sort by speed trap descending; push None to end
     rows.sort(key=lambda x: (x["speedTrap"] is None, -(x["speedTrap"] or 0)))
-    return rows
+    return {"source": source, "drivers": rows}
 
 
 @tool_handler
@@ -384,6 +514,7 @@ async def get_sector_times(
     event: str | int,
     session: str,
     driver: str | None = None,
+    include_laps: bool = False,
 ) -> list[dict]:
     """
     Get best sector times and theoretical best lap for each driver.
@@ -391,19 +522,30 @@ async def get_sector_times(
     Data source: FastF1 Live Timing
     Coverage: 2018-present
 
+    Set `include_laps=True` when the user wants per-lap sector breakdowns
+    (e.g. "show me Antonelli's sector times each lap") rather than just
+    the per-driver best/theoretical-best summary.
+
     Args:
         year: Season year (2018+)
         event: Race name or round number
         session: Session type (R, Q, S, FP1, FP2, FP3)
         driver: Optional driver code to filter (default: all drivers)
+        include_laps: If True, include a `laps` array per driver with each
+                      accurate lap's S1/S2/S3 and total lap time. Default
+                      False keeps responses compact for the typical
+                      "fastest sectors / theoretical best" question.
 
     Returns:
-        For each driver: bestS1, bestS2, bestS3, theoreticalBest,
-        actualBest, gapSec (theoretical vs actual best)
+        For each driver: driver (code), fullName, teamName, bestS1, bestS2,
+        bestS3, theoreticalBest, actualBest, gapSec. With `include_laps`,
+        each entry also has `laps: [{lapNumber, s1, s2, s3, lapTime}, ...]`.
 
     Example:
         get_sector_times(2024, "Monaco", "Q") → [
-            {"driver": "VER", "bestS1": "0:00:22.123", "bestS2": "0:00:24.456",
+            {"driver": "VER", "fullName": "Max Verstappen",
+             "teamName": "Red Bull Racing",
+             "bestS1": "0:00:22.123", "bestS2": "0:00:24.456",
              "bestS3": "0:00:21.789", "theoreticalBest": "0:01:08.368",
              "actualBest": "0:01:08.570", "gapSec": -0.202},
             ...
@@ -414,8 +556,11 @@ async def get_sector_times(
         sector bests) is faster than the actual best lap — typical, since
         sector bests usually come from different laps.
     """
-    logger.info(f"get_sector_times: {year=}, {event=}, {session=}, {driver=}")
+    logger.info(
+        f"get_sector_times: {year=}, {event=}, {session=}, {driver=}, {include_laps=}"
+    )
     session_obj = await require_session(year, event, session)
+    driver_lookup = build_driver_lookup(session_obj)
 
     laps = session_obj.laps
     if driver is not None:
@@ -450,20 +595,48 @@ async def get_sector_times(
             if actual_best is not None:
                 gap_sec = round((theoretical_best - actual_best).total_seconds(), 3)
 
-        results.append(
-            {
-                "driver": drv,
-                "_theoreticalRaw": theoretical_best,
-                "bestS1": str(best_s1) if best_s1 is not None else None,
-                "bestS2": str(best_s2) if best_s2 is not None else None,
-                "bestS3": str(best_s3) if best_s3 is not None else None,
-                "theoreticalBest": str(theoretical_best)
-                if theoretical_best is not None
-                else None,
-                "actualBest": str(actual_best) if actual_best is not None else None,
-                "gapSec": gap_sec,
-            }
-        )
+        info = driver_lookup.get(drv, {})
+        entry = {
+            "driver": info.get("driverCode") or drv,
+            "fullName": info.get("fullName", ""),
+            "teamName": info.get("teamName", ""),
+            "_theoreticalRaw": theoretical_best,
+            "bestS1": str(best_s1) if best_s1 is not None else None,
+            "bestS2": str(best_s2) if best_s2 is not None else None,
+            "bestS3": str(best_s3) if best_s3 is not None else None,
+            "theoreticalBest": str(theoretical_best)
+            if theoretical_best is not None
+            else None,
+            "actualBest": str(actual_best) if actual_best is not None else None,
+            "gapSec": gap_sec,
+        }
+
+        if include_laps:
+            per_lap = []
+            for _, row in drv_laps.iterrows():
+                per_lap.append(
+                    {
+                        "lapNumber": int(row["LapNumber"])
+                        if pd.notna(row.get("LapNumber"))
+                        else None,
+                        "s1": str(row["Sector1Time"])
+                        if pd.notna(row.get("Sector1Time"))
+                        else None,
+                        "s2": str(row["Sector2Time"])
+                        if pd.notna(row.get("Sector2Time"))
+                        else None,
+                        "s3": str(row["Sector3Time"])
+                        if pd.notna(row.get("Sector3Time"))
+                        else None,
+                        "lapTime": str(row["LapTime"])
+                        if pd.notna(row.get("LapTime"))
+                        else None,
+                    }
+                )
+            per_lap.sort(key=lambda x: x["lapNumber"] or 0)
+            entry["laps"] = per_lap
+
+        results.append(entry)
 
     # Sort by raw Timedelta ascending (fastest first); push None to end.
     _max_td = pd.Timedelta.max

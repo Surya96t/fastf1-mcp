@@ -241,7 +241,6 @@ async def get_circuit_info(
         partial(
             ergast.get_circuits,
             season=year,
-            circuit=circuit_id,
             limit=100,
         ),
     )
@@ -251,4 +250,7 @@ async def get_circuit_info(
     else:
         df = result
 
-    return df.to_dict(orient="records")
+    records = df.to_dict(orient="records")
+    if circuit_id is not None:
+        records = [r for r in records if r.get("circuitId") == circuit_id]
+    return records
