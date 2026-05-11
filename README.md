@@ -100,7 +100,35 @@ All settings are read from environment variables with the `FASTF1_MCP_` prefix.
 | `FASTF1_MCP_MAX_CACHED_SESSIONS` | `10` | Max sessions held in memory (LRU) |
 | `FASTF1_MCP_DEFAULT_TELEMETRY_SAMPLES` | `200` | Default telemetry sample points |
 | `FASTF1_MCP_MAX_TELEMETRY_SAMPLES` | `500` | Hard cap on telemetry sample points |
+| `FASTF1_MCP_EXPORT_DIR` | `./fastf1-exports` | Directory for CSV exports (relative to server cwd) |
+| `FASTF1_MCP_AUTO_EXPORT_ROWS` | `50` | Auto-export to CSV when the bulk array exceeds this many rows. Set to `0` to disable. |
 | `FASTF1_MCP_LOG_LEVEL` | `INFO` | Python logging level |
+
+### Exporting full datasets for analysis
+
+`get_lap_times`, `get_stint_analysis`, `get_lap_telemetry`, and
+`compare_telemetry` route the bulk data array through CSV when the user
+needs the file rather than the inline JSON.
+
+**Two ways the export gets triggered:**
+
+1. **Auto-export** (default for large responses) — when the response's
+   bulk array would exceed `FASTF1_MCP_AUTO_EXPORT_ROWS` rows (default 50),
+   the server writes it to CSV in `FASTF1_MCP_EXPORT_DIR` and the response
+   carries `exportPath` + a `note` instead of the array. This catches
+   full-race lap-time queries, full-grid stint analyses, and 200-point
+   telemetry traces — exactly the cases where MCP clients would otherwise
+   silently spill the response to an opaque temp file.
+2. **Explicit `export_path` parameter** — pass it on the tool call:
+   - `export_path=True` → write to `<FASTF1_MCP_EXPORT_DIR>/<auto-named>.csv`
+   - `export_path="data/laps"` → write the auto-named file into the given directory
+   - `export_path="data/ver-monaco.csv"` → write to exactly that file
+
+The `summary` field is always included so a chat-only user can still
+answer "what was the fastest lap / what's the strategy" without opening
+the file. Relative paths resolve against the MCP server's working
+directory — under Claude Desktop, that's the `cwd` set in your MCP
+config, so files land in the user's project directory by default.
 
 ---
 

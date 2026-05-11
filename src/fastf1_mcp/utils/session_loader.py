@@ -14,6 +14,27 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
+# Substrings (lowercase) that, when present in a FastF1 ValueError, indicate
+# the caller asked for a session type that the event doesn't have (e.g. a
+# sprint at a non-sprint weekend) rather than a generic load failure.
+_SESSION_NOT_HELD_HINTS = (
+    "does not exist for this event",
+    "is not a valid session",
+    "is not part of this event",
+    "not part of this event",
+    "session does not exist",
+    "no session with name",
+    "no session of type",
+)
+
+
+def _is_session_not_held(exc: Exception) -> bool:
+    if not isinstance(exc, ValueError):
+        return False
+    msg = str(exc).lower()
+    return any(hint in msg for hint in _SESSION_NOT_HELD_HINTS)
+
+
 async def require_session(
     year: int,
     event: str | int,
@@ -42,6 +63,17 @@ async def require_session(
         raise
     except Exception as e:
         logger.error(f"Failed to load session {year} {event} {session}: {e}")
+        if _is_session_not_held(e):
+            raise FastF1MCPError(
+                ErrorCode.SESSION_NOT_HELD,
+                f"Session '{session}' was not held at {year} {event}.",
+                suggestions=[
+                    "Verify the event format with list_events or get_schedule — "
+                    "not every weekend has a sprint (S/SQ).",
+                    "Valid session identifiers: R (race), Q (qualifying), "
+                    "S (sprint), SQ (sprint qualifying), FP1, FP2, FP3.",
+                ],
+            ) from e
         raise FastF1MCPError(
             ErrorCode.SESSION_NOT_FOUND,
             f"Could not load session: {year} {event} {session}. {e}",

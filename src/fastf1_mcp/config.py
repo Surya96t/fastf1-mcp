@@ -18,6 +18,19 @@ class Settings(BaseSettings):
     default_telemetry_samples: int = 200
     max_telemetry_samples: int = 500
 
+    # Export directory for full-dataset CSV exports. Relative paths are
+    # resolved against the server's working directory at tool-call time —
+    # under Claude Desktop, that's the `cwd` set in the MCP config (i.e.
+    # the user's project root).
+    export_dir: Path = Path("fastf1-exports")
+
+    # When the bulk array of a heavy tool's response would exceed this many
+    # rows, auto-export to CSV instead of returning the data inline. The
+    # response then carries `exportPath` + a `note` instead of the array.
+    # Set to 0 to disable auto-export (data is always inline unless the
+    # caller explicitly passes export_path).
+    auto_export_rows: int = 50
+
     # Logging
     log_level: str = "INFO"
 

@@ -73,9 +73,13 @@ async def test_get_lap_times_excludes_deleted_by_default():
     with _patch_session(session):
         result = await get_lap_times(2024, "Monaco", "R", "VER")
 
-    assert isinstance(result, list)
-    assert len(result) == 3, "Deleted lap should be filtered out"
-    assert all(lap["lapNumber"] != 3 for lap in result)
+    # New shape: {"driver", "fullName", "teamName", "summary", "laps"}
+    assert isinstance(result, dict)
+    assert "summary" in result
+    assert result["summary"]["totalLaps"] == 3, "Deleted lap should be filtered out"
+    # fastestLap reflects the 89.5 lap (lapNumber 2)
+    assert result["summary"]["fastestLap"]["lapNumber"] == 2
+    assert all(lap["lapNumber"] != 3 for lap in result["laps"])
 
 
 @pytest.mark.asyncio
@@ -93,7 +97,8 @@ async def test_get_lap_times_includes_deleted_when_requested():
     with _patch_session(session):
         result = await get_lap_times(2024, "Monaco", "R", "VER", include_deleted=True)
 
-    assert len(result) == 2
+    assert isinstance(result, dict)
+    assert len(result["laps"]) == 2
 
 
 @pytest.mark.asyncio
@@ -111,7 +116,8 @@ async def test_get_lap_times_handles_missing_deleted_column():
     with _patch_session(session):
         result = await get_lap_times(2024, "Monaco", "R", "VER")
 
-    assert len(result) == 2
+    assert isinstance(result, dict)
+    assert len(result["laps"]) == 2
 
 
 @pytest.mark.asyncio
@@ -288,13 +294,87 @@ async def test_get_speed_trap_data_sorted_descending():
     ):
         result = await get_speed_trap_data(2024, "Monaco", "Q")
 
-    assert [r["driver"] for r in result] == ["LEC", "VER", "SAI"]
-    assert result[0]["speedI1"] == 250.0
+    # New shape: {"source": "results" | "laps", "drivers": [...]}
+    assert isinstance(result, dict)
+    assert result["source"] == "results"
+    drivers = result["drivers"]
+    assert [r["driver"] for r in drivers] == ["LEC", "VER", "SAI"]
+    assert drivers[0]["speedI1"] == 250.0
+
+
+@pytest.mark.asyncio
+async def test_get_speed_trap_data_falls_back_to_laps():
+    # All SpeedST/FL/I1/I2 are null on session.results → use per-lap max.
+    results_df = pd.DataFrame(
+        {
+            "Abbreviation": ["VER", "LEC"],
+            "FullName": ["Max Verstappen", "Charles Leclerc"],
+            "TeamName": ["Red Bull", "Ferrari"],
+            "SpeedST": [None, None],
+            "SpeedFL": [None, None],
+            "SpeedI1": [None, None],
+            "SpeedI2": [None, None],
+        }
+    )
+    laps = FakeLaps(
+        {
+            "Driver": ["VER", "VER", "LEC", "LEC"],
+            "LapNumber": [1, 2, 1, 2],
+            "SpeedST": [301.0, 305.5, 298.0, 302.0],
+            "SpeedFL": [180.0, 182.0, 178.0, 181.0],
+            "SpeedI1": [240.0, 242.0, 238.0, 241.0],
+            "SpeedI2": [260.0, 262.0, 258.0, 261.0],
+        }
+    )
+    session = _make_session(laps, drivers=["VER", "LEC"], results_df=results_df)
+
+    with patch(
+        "fastf1_mcp.utils.session_loader.session_manager.get_session",
+        new_callable=AsyncMock,
+        return_value=session,
+    ):
+        result = await get_speed_trap_data(2024, "Monaco", "Q")
+
+    assert result["source"] == "laps"
+    # max per driver across both laps, sorted descending by speedTrap
+    assert [r["driver"] for r in result["drivers"]] == ["VER", "LEC"]
+    assert result["drivers"][0]["speedTrap"] == 305.5
+    assert result["drivers"][1]["speedTrap"] == 302.0
+    # Driver enrichment came from results_df
+    assert result["drivers"][0]["fullName"] == "Max Verstappen"
+    assert result["drivers"][0]["teamName"] == "Red Bull"
 
 
 # ---------------------------------------------------------------------------
 # get_sector_times
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_sector_times_includes_per_lap_array_when_requested():
+    laps = FakeLaps(
+        {
+            "Driver": ["VER"] * 3,
+            "LapNumber": [1, 2, 3],
+            "Sector1Time": [_td(28.0), _td(28.5), _td(28.2)],
+            "Sector2Time": [_td(32.5), _td(32.0), _td(32.3)],
+            "Sector3Time": [_td(30.3), _td(30.5), _td(30.0)],
+            "LapTime": [_td(90.8), _td(91.0), _td(90.5)],
+            "IsAccurate": [True, True, True],
+        }
+    )
+    session = _make_session(laps, drivers=["VER"])
+
+    with _patch_session(session):
+        result = await get_sector_times(2024, "Monaco", "Q", include_laps=True)
+
+    assert len(result) == 1
+    row = result[0]
+    assert "laps" in row
+    assert len(row["laps"]) == 3
+    # First lap by lapNumber, with all three sectors recorded
+    assert row["laps"][0]["lapNumber"] == 1
+    assert row["laps"][0]["s1"] == str(_td(28.0))
 
 
 @pytest.mark.asyncio
@@ -350,14 +430,82 @@ async def test_get_stint_analysis_groups_by_stint():
     with _patch_session(session):
         result = await get_stint_analysis(2024, "Monaco", "VER")
 
-    assert len(result) == 2
-    s1, s2 = result
+    # New shape: {"summary": {...}, "stints": [...]}
+    assert isinstance(result, dict)
+    stints = result["stints"]
+    assert len(stints) == 2
+    s1, s2 = stints
     assert s1["compound"] == "MEDIUM"
     assert s1["startLap"] == 1
     assert s1["endLap"] == 3
     assert s1["lapCount"] == 3
     assert s2["compound"] == "HARD"
     assert s2["startLap"] == 4
+
+    # Summary contains the per-driver strategy (1-stop MEDIUM→HARD)
+    strategies = result["summary"]["strategies"]
+    assert len(strategies) == 1
+    assert strategies[0]["driver"] == "VER"
+    assert strategies[0]["compoundSequence"] == ["MEDIUM", "HARD"]
+    assert strategies[0]["pitStops"] == 1
+    assert result["summary"]["totalStints"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_lap_times_export_writes_csv_and_omits_inline_array(tmp_path):
+    laps = FakeLaps(
+        {
+            "Driver": ["VER"] * 3,
+            "LapNumber": [1, 2, 3],
+            "LapTime": [_td(90.0), _td(89.5), _td(89.7)],
+            "Compound": ["MEDIUM"] * 3,
+        }
+    )
+    session = _make_session(laps, drivers=["VER"])
+
+    target = tmp_path / "ver_laps.csv"
+    with _patch_session(session):
+        result = await get_lap_times(
+            2024, "Monaco", "R", "VER", export_path=str(target)
+        )
+
+    assert "laps" not in result, "Inline array should be omitted when exporting"
+    assert result["exportPath"] == str(target.resolve())
+    assert result["rowCount"] == 3
+    assert target.exists()
+    # CSV has a header + one line per lap
+    lines = target.read_text().strip().splitlines()
+    assert len(lines) == 4
+    assert "lapNumber" in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_get_stint_analysis_export_writes_csv(tmp_path):
+    laps = FakeLaps(
+        {
+            "Driver": ["VER"] * 6,
+            "LapNumber": [1, 2, 3, 4, 5, 6],
+            "Stint": [1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
+            "LapTime": [_td(91), _td(90), _td(90.5), _td(89), _td(88.5), _td(89.2)],
+            "Compound": ["MEDIUM"] * 3 + ["HARD"] * 3,
+            "IsAccurate": [True] * 6,
+        }
+    )
+    session = _make_session(laps, drivers=["VER"])
+
+    target = tmp_path / "ver_stints.csv"
+    with _patch_session(session):
+        result = await get_stint_analysis(
+            2024, "Monaco", "VER", export_path=str(target)
+        )
+
+    assert "stints" not in result
+    assert result["exportPath"] == str(target.resolve())
+    assert result["rowCount"] == 2
+    assert target.exists()
+    # Summary still present even when exporting
+    assert "summary" in result
+    assert result["summary"]["totalStints"] == 2
 
 
 @pytest.mark.asyncio

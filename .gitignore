@@ -20,3 +20,4 @@ src/fastf1_mcp/_version.py
 
 # Internal planning & reference docs 
 refs/
+fastf1-exports/

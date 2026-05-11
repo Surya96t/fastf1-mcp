@@ -130,14 +130,23 @@ async def list_drivers(
             )
         return drivers
 
-    # Season-level: use Ergast
+    # Season-level: use Ergast. Driver info gives biographical fields;
+    # driver standings gives the team mapping. Fetch both in parallel and
+    # merge so the output includes the team a driver actually raced for.
     loop = asyncio.get_running_loop()
     ergast = Ergast()
 
     try:
-        result = await loop.run_in_executor(
-            None,
-            partial(ergast.get_driver_info, season=year, limit=1000),
+        info_result, standings_result = await asyncio.gather(
+            loop.run_in_executor(
+                None,
+                partial(ergast.get_driver_info, season=year, limit=1000),
+            ),
+            loop.run_in_executor(
+                None,
+                partial(ergast.get_driver_standings, season=year),
+            ),
+            return_exceptions=True,
         )
     except Exception as e:
         logger.error(f"Failed to fetch drivers for {year}: {e}")
@@ -147,19 +156,46 @@ async def list_drivers(
             suggestions=["Check that the year is valid (1950-present)"],
         ).to_dict()
 
-    if hasattr(result, "content") and len(result.content) > 0:
-        df = result.content[0]
+    if isinstance(info_result, Exception):
+        logger.error(f"Failed to fetch driver info for {year}: {info_result}")
+        return FastF1MCPError(
+            ErrorCode.DATA_UNAVAILABLE,
+            f"Could not fetch driver list for {year}: {info_result}",
+            suggestions=["Check that the year is valid (1950-present)"],
+        ).to_dict()
+
+    if hasattr(info_result, "content") and len(info_result.content) > 0:
+        info_df = info_result.content[0]
     else:
-        df = result
+        info_df = info_result
+
+    # Build code → team lookup from standings; tolerate a standings failure.
+    team_by_code: dict[str, str] = {}
+    if not isinstance(standings_result, Exception):
+        if hasattr(standings_result, "content") and len(standings_result.content) > 0:
+            standings_df = standings_result.content[0]
+            for _, row in standings_df.iterrows():
+                code = row.get("driverCode", "") or ""
+                if not code:
+                    continue
+                names = row.get("constructorNames", [])
+                if isinstance(names, list) and names:
+                    team_by_code[code] = names[0]
+    else:
+        logger.warning(
+            f"Driver standings unavailable for {year}: {standings_result}. "
+            "Returning driver list without team info."
+        )
 
     drivers = []
-    for _, row in df.iterrows():
+    for _, row in info_df.iterrows():
+        code = row.get("driverCode", "")
         drivers.append(
             {
-                "code": row.get("driverCode", ""),
+                "code": code,
                 "fullName": f"{row.get('givenName', '')} {row.get('familyName', '')}".strip(),
                 "nationality": row.get("driverNationality", ""),
-                "team": "",
+                "team": team_by_code.get(code, ""),
                 "number": str(row.get("permanentNumber", "")),
             }
         )

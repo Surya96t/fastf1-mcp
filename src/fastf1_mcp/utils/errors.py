@@ -5,6 +5,7 @@ class ErrorCode(Enum):
     """MCP-compatible error codes."""
 
     SESSION_NOT_FOUND = "session_not_found"
+    SESSION_NOT_HELD = "session_not_held"
     DRIVER_NOT_FOUND = "driver_not_found"
     DATA_UNAVAILABLE = "data_unavailable"
     INVALID_PARAMETER = "invalid_parameter"
