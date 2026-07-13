@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>fastf1-mcp chart preview</title>
+  <!--
+    Local dev harness for the chart tools in src/fastf1_mcp/tools/visualization.py.
+
+    Usage:
+      1. Run a chart tool (e.g. get_pace_delta_chart) via the MCP server or a
+         direct Python call.
+      2. Copy the value of the response's "vegaLiteSpec" field (the full JSON
+         object, including $schema/title/data/...).
+      3. Paste it into the textarea below and click "Render".
+
+    No build step required — Vega/Vega-Lite/vega-embed come from CDN. Open
+    this file directly in a browser (file:// works) or serve it locally.
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; }
+    textarea { width: 100%; height: 220px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+    button { padding: 0.5rem 1rem; margin-top: 0.5rem; cursor: pointer; }
+    #chart { margin-top: 1.5rem; min-height: 400px; border: 1px solid #eee; padding: 1rem; }
+    .error { color: #b00020; font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+    code { background: #f4f4f4; padding: 0 0.25rem; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <h1>fastf1-mcp chart preview</h1>
+  <p>
+    Paste the <code>vegaLiteSpec</code> JSON from a chart tool's response below,
+    then click <strong>Render</strong>.
+  </p>
+  <p style="background:#fff5d6;border:1px solid #f0c800;padding:0.5rem 0.75rem;border-radius:4px;">
+    <strong>Open this file in a real browser</strong> (e.g. <code>open examples/preview-charts.html</code>).
+    VS Code's built-in HTML preview blocks the Vega CDN scripts, so the chart
+    won't render there.
+  </p>
+  <textarea id="spec" placeholder='{"$schema": "https://vega.github.io/schema/vega-lite/v5.json", ...}'></textarea>
+  <div>
+    <button onclick="render()">Render</button>
+    <button onclick="clearChart()">Clear</button>
+  </div>
+  <div id="chart"></div>
+  <script>
+    function render() {
+      const chartEl = document.getElementById("chart");
+      chartEl.innerHTML = "";
+      const raw = document.getElementById("spec").value.trim();
+      if (!raw) {
+        chartEl.innerHTML = '<span class="error">Paste a Vega-Lite spec first.</span>';
+        return;
+      }
+      let spec;
+      try {
+        spec = JSON.parse(raw);
+      } catch (e) {
+        chartEl.innerHTML = '<span class="error">JSON parse error: ' + e.message + '</span>';
+        return;
+      }
+      vegaEmbed("#chart", spec, { actions: false }).catch((err) => {
+        chartEl.innerHTML = '<span class="error">Render error: ' + err.message + '</span>';
+      });
+    }
+    function clearChart() {
+      document.getElementById("spec").value = "";
+      document.getElementById("chart").innerHTML = "";
+    }
+  </script>
+</body>
+</html>

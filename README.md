@@ -8,7 +8,7 @@ An [MCP](https://modelcontextprotocol.io) server that exposes Formula 1 data to 
 
 ## Features
 
-- **21 tools** covering standings, race results, lap times, telemetry, pit stops, and qualifying
+- **26 tools** covering standings, race results, lap times, telemetry, pit stops, qualifying, and **Vega-Lite chart generation**
 - **4 MCP resources** for schedule, driver, constructor, and circuit reference data
 - **5 guided prompts** for race recaps, qualifying analysis, strategy deep-dives, and weekend previews
 - Async-safe **LRU session cache** — repeat queries are instant after the first load
@@ -166,6 +166,20 @@ config, so files land in the user's project directory by default.
 | `get_speed_trap_data` | Get speed trap and top-speed data for all drivers in a session. |
 | `get_sector_times` | Get best sector times and theoretical best lap for each driver. |
 
+### Visualization (Vega-Lite v5 chart specs — 2018-present)
+
+Each tool returns a ready-to-render **Vega-Lite v5** spec plus a self-contained
+HTML page. See [Rendering charts](#rendering-charts) below for how the charts
+surface in different clients.
+
+| Tool | Description |
+|---|---|
+| `get_lap_time_chart` | Line+point chart of a driver's lap times across a session, coloured by tyre compound. |
+| `get_pace_delta_chart` | Horizontal-bar chart of each driver's race-pace delta to the fastest driver. |
+| `get_tyre_strategy_chart` | Horizontal-Gantt chart of tyre stints across the field (or one driver). |
+| `get_position_chart` | Multi-line chart of race positions by lap (P1 on top). |
+| `get_speed_trace_chart` | Two-driver speed trace along the lap distance. |
+
 ### Utility
 
 | Tool | Description |
@@ -215,6 +229,45 @@ Who had the fastest theoretical lap in 2024 Silverstone qualifying?
 Show me the 2024 constructor standings after round 10
 → get_constructor_standings(2024, after_round=10)
 ```
+
+---
+
+## Rendering charts
+
+The five `*_chart` tools return a Vega-Lite v5 spec that renders the same way
+across clients. Each response carries:
+
+| Field | Purpose |
+|---|---|
+| `vegaLiteSpec` | The full Vega-Lite v5 spec (self-contained — data is embedded, no external fetch at render time). |
+| `html` | A complete, self-contained HTML page with the spec already embedded — paste verbatim into a Claude Desktop artifact. |
+| `png` | A `data:image/png;base64,…` render of the chart (via `vl-convert`), for clients that display images inline. |
+| `htmlPath` | Path to a temp HTML file the server **auto-opens in your default browser** — so the chart appears even in clients that ignore the other fields. |
+| `renderingInstructions` | Guidance the model follows to surface the chart without inventing custom tags. |
+
+**Per client:**
+
+- **Claude Desktop** — the model builds an artifact from the `html` field and
+  the chart renders in the conversation.
+- **VS Code / other MCP clients** — the server opens `htmlPath` in your default
+  browser automatically, regardless of how the client handles tool output.
+
+Charts use F1 broadcast conventions: team colours (via `fastf1.plotting`),
+tyre-compound colours (soft/medium/hard/inter/wet), reversed position axes
+(P1 on top), and lap times formatted as `M:SS.mmm`.
+
+Example:
+
+```
+Chart Verstappen's lap times at the 2024 Monaco GP
+→ get_lap_time_chart(2024, "Monaco", "R", "VER")
+
+Show the tyre strategy for the 2024 Hungarian GP
+→ get_tyre_strategy_chart(2024, "Hungary")
+```
+
+Rendering PNGs requires [`vl-convert`](https://github.com/vega/vl-convert)
+(installed automatically via `uv sync`); no Node.js is needed.
 
 ---
 

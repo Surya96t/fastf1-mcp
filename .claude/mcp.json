@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "fastf1": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "/Users/surya96t/Documents/projects/mcp-projects/fastf1-mcp",
+        "fastf1-mcp-server"
+      ],
+      "env": {
+        "FASTF1_MCP_LOG_LEVEL": "INFO",
+        "FASTF1_MCP_MAX_CACHED_SESSIONS": "10"
+      }
+    }
+  }
+}

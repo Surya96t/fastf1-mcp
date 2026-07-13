@@ -41,6 +41,13 @@ from .tools.telemetry import (
     get_speed_trap_data,
     get_sector_times,
 )
+from .tools.visualization import (
+    get_lap_time_chart,
+    get_pace_delta_chart,
+    get_position_chart,
+    get_speed_trace_chart,
+    get_tyre_strategy_chart,
+)
 from .resources import (
     schedule_resource,
     drivers_resource,
@@ -125,6 +132,16 @@ mcp.tool(get_lap_telemetry)
 mcp.tool(compare_telemetry)
 mcp.tool(get_speed_trap_data)
 mcp.tool(get_sector_times)
+
+# =============================================================================
+# Visualization Tools (Vega-Lite v5 specs — render in Claude Artifacts)
+# =============================================================================
+
+mcp.tool(get_lap_time_chart)
+mcp.tool(get_pace_delta_chart)
+mcp.tool(get_position_chart)
+mcp.tool(get_speed_trace_chart)
+mcp.tool(get_tyre_strategy_chart)
 
 # =============================================================================
 # Resources (Ergast API — reference data at well-known URIs)
