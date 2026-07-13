@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -71,6 +72,89 @@ def _cumulative_time_at_distances(
         cum_sorted = np.cumsum(dd / v_ms)
 
     return np.interp(distances, d_sorted, cum_sorted)
+
+
+async def _compute_telemetry_comparison(
+    year: int,
+    event: str | int,
+    session: str,
+    driver1: str,
+    driver2: str,
+    lap: int | str = "fastest",
+    sample_size: int = 200,
+) -> tuple[Any, str, str, list[dict]]:
+    """Core driver-vs-driver telemetry comparison shared by ``compare_telemetry``
+    and the speed-trace chart tool.
+
+    Returns ``(session_obj, driver1_code, driver2_code, comparison_rows)``.
+    ``comparison_rows`` is the same per-distance list ``compare_telemetry``
+    exposes — each row carries ``distance``, ``speed1``, ``speed2``,
+    ``speedDelta``, and ``timeDelta`` (cumulative, positive = driver1 ahead).
+    """
+    sample_size = max(1, min(sample_size, settings.max_telemetry_samples))
+    session_obj = await require_session(year, event, session, with_telemetry=True)
+
+    lap1 = _get_driver_lap(session_obj, driver1, lap)
+    lap2 = _get_driver_lap(session_obj, driver2, lap)
+
+    if lap1 is None:
+        raise FastF1MCPError(
+            ErrorCode.DRIVER_NOT_FOUND,
+            f"No lap found for driver '{driver1}'",
+            suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
+        )
+    if lap2 is None:
+        raise FastF1MCPError(
+            ErrorCode.DRIVER_NOT_FOUND,
+            f"No lap found for driver '{driver2}'",
+            suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
+        )
+
+    try:
+        tel1 = lap1.get_telemetry().add_distance()
+        tel2 = lap2.get_telemetry().add_distance()
+    except Exception as e:
+        raise FastF1MCPError(
+            ErrorCode.DATA_UNAVAILABLE,
+            f"Telemetry unavailable: {e}",
+        ) from e
+
+    # Distance grid aligned to driver1
+    max_dist = float(tel1["Distance"].max())
+    distances = np.linspace(0, max_dist, sample_size)
+
+    # Interpolate speed for both drivers. np.interp requires xp to be monotonic
+    # increasing, so sort+dedup and (for tel2) restrict to the driver1 window.
+    def _interp_speed(tel: pd.DataFrame, max_d: float | None = None) -> np.ndarray:
+        d = tel["Distance"].to_numpy(dtype=float)
+        s = tel["Speed"].to_numpy(dtype=float)
+        if max_d is not None:
+            mask = d <= max_d
+            d, s = d[mask], s[mask]
+        order = np.argsort(d, kind="stable")
+        d, s = d[order], s[order]
+        keep = np.concatenate(([True], np.diff(d) > 0))
+        return np.interp(distances, d[keep], s[keep])
+
+    speed1 = _interp_speed(tel1)
+    speed2 = _interp_speed(tel2, max_d=max_dist)
+
+    cum_time1 = _cumulative_time_at_distances(tel1, distances)
+    cum_time2 = _cumulative_time_at_distances(tel2, distances)
+    time_delta = cum_time1 - cum_time2
+
+    comparison = [
+        {
+            "distance": round(float(distances[i]), 1),
+            "speed1": round(float(speed1[i]), 1),
+            "speed2": round(float(speed2[i]), 1),
+            "speedDelta": round(float(speed1[i] - speed2[i]), 1),
+            "timeDelta": round(float(time_delta[i]), 3),
+        }
+        for i in range(sample_size)
+    ]
+
+    return session_obj, driver1, driver2, comparison
 
 
 # ---------------------------------------------------------------------------
@@ -268,71 +352,18 @@ async def compare_telemetry(
     )
 
     sample_size = max(1, min(sample_size, settings.max_telemetry_samples))
-    session_obj = await require_session(year, event, session, with_telemetry=True)
+    session_obj, d1_code, d2_code, comparison = await _compute_telemetry_comparison(
+        year, event, session, driver1, driver2, lap=lap, sample_size=sample_size
+    )
 
-    lap1 = _get_driver_lap(session_obj, driver1, lap)
-    lap2 = _get_driver_lap(session_obj, driver2, lap)
+    # Re-derive lap rows and telemetry frames for the wrapping summary block.
+    # Session + telemetry are already loaded by the helper above, so these
+    # calls hit the in-memory cache.
+    lap1 = _get_driver_lap(session_obj, d1_code, lap)
+    lap2 = _get_driver_lap(session_obj, d2_code, lap)
+    tel1 = lap1.get_telemetry().add_distance()
+    tel2 = lap2.get_telemetry().add_distance()
 
-    if lap1 is None:
-        raise FastF1MCPError(
-            ErrorCode.DRIVER_NOT_FOUND,
-            f"No lap found for driver '{driver1}'",
-            suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
-        )
-    if lap2 is None:
-        raise FastF1MCPError(
-            ErrorCode.DRIVER_NOT_FOUND,
-            f"No lap found for driver '{driver2}'",
-            suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
-        )
-
-    try:
-        tel1 = lap1.get_telemetry().add_distance()
-        tel2 = lap2.get_telemetry().add_distance()
-    except Exception as e:
-        raise FastF1MCPError(
-            ErrorCode.DATA_UNAVAILABLE,
-            f"Telemetry unavailable: {e}",
-        ) from e
-
-    # Distance grid aligned to driver1
-    max_dist = float(tel1["Distance"].max())
-    distances = np.linspace(0, max_dist, sample_size)
-
-    # Interpolate speed for both drivers. np.interp requires xp to be monotonic
-    # increasing, so sort+dedup and (for tel2) restrict to the driver1 window.
-    def _interp_speed(tel: pd.DataFrame, max_d: float | None = None) -> np.ndarray:
-        d = tel["Distance"].to_numpy(dtype=float)
-        s = tel["Speed"].to_numpy(dtype=float)
-        if max_d is not None:
-            mask = d <= max_d
-            d, s = d[mask], s[mask]
-        order = np.argsort(d, kind="stable")
-        d, s = d[order], s[order]
-        keep = np.concatenate(([True], np.diff(d) > 0))
-        return np.interp(distances, d[keep], s[keep])
-
-    speed1 = _interp_speed(tel1)
-    speed2 = _interp_speed(tel2, max_d=max_dist)
-
-    cum_time1 = _cumulative_time_at_distances(tel1, distances)
-    cum_time2 = _cumulative_time_at_distances(tel2, distances)
-    time_delta = cum_time1 - cum_time2  # positive = driver1 ahead in elapsed time
-
-    comparison = [
-        {
-            "distance": round(float(distances[i]), 1),
-            "speed1": round(float(speed1[i]), 1),
-            "speed2": round(float(speed2[i]), 1),
-            "speedDelta": round(float(speed1[i] - speed2[i]), 1),
-            "timeDelta": round(float(time_delta[i]), 3),
-        }
-        for i in range(sample_size)
-    ]
-
-    # Per-driver telemetry summary — built from the original telemetry frames
-    # (not the aligned comparison grid) so braking-zone and max-speed counts
-    # reflect each driver's actual lap.
     def _summary_for(tel: pd.DataFrame) -> dict:
         points = telemetry_to_json(tel, sample_size)
         return telemetry_summary(points)
@@ -361,16 +392,22 @@ async def compare_telemetry(
                 "deltaSec": round((v1 - v2).total_seconds(), 3),
             }
 
+    max_speed_delta = (
+        round(float(max(abs(row["speedDelta"]) for row in comparison)), 1)
+        if comparison
+        else 0.0
+    )
+
     response: dict = {
         "driver1": {
-            "code": driver1,
+            "code": d1_code,
             "lapNumber": int(lap1["LapNumber"])
             if pd.notna(lap1.get("LapNumber"))
             else None,
             "lapTime": str(t1) if pd.notna(t1) else None,
         },
         "driver2": {
-            "code": driver2,
+            "code": d2_code,
             "lapNumber": int(lap2["LapNumber"])
             if pd.notna(lap2.get("LapNumber"))
             else None,
@@ -378,7 +415,7 @@ async def compare_telemetry(
         },
         "summary": {
             "lapTimeDeltaSec": lap_time_delta,
-            "maxSpeedDelta": round(float(np.max(np.abs(speed1 - speed2))), 1),
+            "maxSpeedDelta": max_speed_delta,
             "sectors": sectors,
             "driver1Telemetry": driver1_summary,
             "driver2Telemetry": driver2_summary,

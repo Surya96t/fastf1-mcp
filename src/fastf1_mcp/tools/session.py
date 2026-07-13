@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import pandas as pd
 
@@ -116,25 +117,11 @@ async def get_lap_times(
     logger.info(
         f"get_lap_times: {year=}, {event=}, {session=}, {driver=}, {include_deleted=}"
     )
-    session_obj = await require_session(year, event, session)
-    laps = session_obj.laps.pick_drivers(driver)
-
-    if len(laps) == 0:
-        raise FastF1MCPError(
-            ErrorCode.DRIVER_NOT_FOUND,
-            f"No laps found for driver '{driver}' in {year} {event} {session}",
-            suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
-        )
-
-    if not include_deleted and "Deleted" in laps.columns:
-        laps = laps[~laps["Deleted"].fillna(False)]
+    _, laps, info = await _compute_lap_times(
+        year, event, session, driver, include_deleted=include_deleted
+    )
 
     laps_json = laps_to_json(laps)
-
-    # Driver enrichment via session.results lookup (input `driver` may be a
-    # code OR a number).
-    driver_lookup = build_driver_lookup(session_obj)
-    info = driver_lookup.get(driver, {})
 
     response: dict = {
         "driver": info.get("driverCode") or driver,
@@ -151,6 +138,46 @@ async def get_lap_times(
         parts=[year, event, session, info.get("driverCode") or driver],
     )
     return response
+
+
+async def _compute_lap_times(
+    year: int,
+    event: str | int,
+    session: str,
+    driver: str,
+    *,
+    include_deleted: bool = False,
+) -> tuple[Any, Any, dict]:
+    """Core lap-times computation shared by ``get_lap_times`` and the
+    lap-time chart tool.
+
+    Returns ``(session_obj, laps_df, driver_info)`` where ``laps_df`` is the
+    picked-driver Laps DataFrame with deleted laps filtered out by default
+    (``include_deleted=True`` keeps them). ``driver_info`` is the driver
+    lookup entry — empty dict if not found in results.
+
+    Raises FastF1MCPError(DRIVER_NOT_FOUND) when the driver has no laps in
+    the session.
+    """
+    session_obj = await require_session(year, event, session)
+    laps = session_obj.laps.pick_drivers(driver)
+
+    if len(laps) == 0:
+        raise FastF1MCPError(
+            ErrorCode.DRIVER_NOT_FOUND,
+            f"No laps found for driver '{driver}' in {year} {event} {session}",
+            suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
+        )
+
+    if not include_deleted and "Deleted" in laps.columns:
+        laps = laps[~laps["Deleted"].fillna(False)]
+
+    # Driver enrichment via session.results lookup (input `driver` may be a
+    # code OR a number).
+    driver_lookup = build_driver_lookup(session_obj)
+    info = driver_lookup.get(driver, {})
+
+    return session_obj, laps, info
 
 
 @tool_handler
@@ -257,10 +284,41 @@ async def get_race_pace(
         f"get_race_pace: {year=}, {event=}, {exclude_first_laps=}, "
         f"{exclude_sc_laps=}, {exclude_pit_laps=}, {min_laps=}"
     )
+    _, pace_data, filters = await _compute_race_pace(
+        year,
+        event,
+        exclude_first_laps=exclude_first_laps,
+        exclude_sc_laps=exclude_sc_laps,
+        exclude_pit_laps=exclude_pit_laps,
+        min_laps=min_laps,
+    )
+
+    # Echo filter context so callers can disambiguate paces computed under
+    # different settings (e.g. SC-laps excluded vs included).
+    return {"filters": filters, "drivers": pace_data}
+
+
+async def _compute_race_pace(
+    year: int,
+    event: str | int,
+    *,
+    exclude_first_laps: int = 2,
+    exclude_sc_laps: bool = True,
+    exclude_pit_laps: bool = True,
+    min_laps: int = 10,
+) -> tuple[Any, list[dict], dict]:
+    """Core race-pace computation shared by ``get_race_pace`` and the
+    pace-delta chart tool.
+
+    Returns ``(session_obj, pace_data, filters)`` where ``pace_data`` is the
+    same per-driver list ``get_race_pace`` exposes (sorted fastest first,
+    each row carrying ``deltaToFastestSec``) and ``filters`` is the echo
+    block describing which filters were applied.
+    """
     session_obj = await require_session(year, event, "R")
     driver_lookup = build_driver_lookup(session_obj)
 
-    pace_data = []
+    pace_data: list[dict] = []
 
     for driver in session_obj.drivers:
         laps = session_obj.laps.pick_drivers(driver)
@@ -310,17 +368,13 @@ async def get_race_pace(
             )
             del item["_avgRaw"]
 
-    # Echo filter context so callers can disambiguate paces computed under
-    # different settings (e.g. SC-laps excluded vs included).
-    return {
-        "filters": {
-            "excludeFirstLaps": exclude_first_laps,
-            "excludeSafetyCarLaps": exclude_sc_laps,
-            "excludePitLaps": exclude_pit_laps,
-            "minLaps": min_laps,
-        },
-        "drivers": pace_data,
+    filters = {
+        "excludeFirstLaps": exclude_first_laps,
+        "excludeSafetyCarLaps": exclude_sc_laps,
+        "excludePitLaps": exclude_pit_laps,
+        "minLaps": min_laps,
     }
+    return session_obj, pace_data, filters
 
 
 @tool_handler
@@ -376,6 +430,34 @@ async def get_stint_analysis(
         sequence per driver in a compact form.
     """
     logger.info(f"get_stint_analysis: {year=}, {event=}, {driver=}")
+    _, results = await _compute_stints(year, event, driver=driver)
+
+    response: dict = {"summary": stint_analysis_summary(results)}
+    apply_export(
+        response,
+        results,
+        bulk_key="stints",
+        export_path=export_path,
+        tool="get_stint_analysis",
+        parts=[year, event, driver],
+    )
+    return response
+
+
+async def _compute_stints(
+    year: int,
+    event: str | int,
+    *,
+    driver: str | None = None,
+) -> tuple[Any, list[dict]]:
+    """Core stint computation shared by ``get_stint_analysis`` and the
+    tyre-strategy chart tool.
+
+    Returns ``(session_obj, stints)`` where ``stints`` is the same per-stint
+    list ``get_stint_analysis`` surfaces (each row has driver, fullName,
+    teamName, stintNumber, compound, startLap, endLap, lapCount, and the
+    min/avg/max lap-time stats). Phantom lap-1 stints are filtered out.
+    """
     session_obj = await require_session(year, event, "R")
     driver_lookup = build_driver_lookup(session_obj)
 
@@ -389,7 +471,7 @@ async def get_stint_analysis(
                 suggestions=["Check the driver code (e.g. 'VER', 'HAM', 'LEC')"],
             )
 
-    results = []
+    results: list[dict] = []
 
     for drv in laps["Driver"].unique():
         driver_laps = laps[laps["Driver"] == drv]
@@ -450,17 +532,67 @@ async def get_stint_analysis(
             results.append(entry)
 
     results.sort(key=lambda x: (x["driver"], x["stintNumber"]))
+    return session_obj, results
 
-    response: dict = {"summary": stint_analysis_summary(results)}
-    apply_export(
-        response,
-        results,
-        bulk_key="stints",
-        export_path=export_path,
-        tool="get_stint_analysis",
-        parts=[year, event, driver],
-    )
-    return response
+
+async def _compute_positions(
+    year: int,
+    event: str | int,
+    *,
+    drivers: list[str] | None = None,
+) -> tuple[Any, list[dict]]:
+    """Core position-by-lap computation shared by the position chart tool.
+
+    Returns ``(session_obj, position_rows)`` where each row is
+    ``{"driver", "fullName", "teamName", "lapNumber", "position"}``.
+    Laps with NaN ``Position`` (formation lap, SC bunching artifacts) are
+    dropped. Driver order follows ``session.results`` (finishing order); a
+    ``drivers`` list filters to that subset (other codes are silently
+    skipped if they have no data).
+    """
+    session_obj = await require_session(year, event, "R")
+    driver_lookup = build_driver_lookup(session_obj)
+
+    results = getattr(session_obj, "results", None)
+    if results is not None and hasattr(results, "iterrows"):
+        ordered_codes = [
+            row.get("Abbreviation")
+            for _, row in results.iterrows()
+            if row.get("Abbreviation")
+        ]
+    else:
+        ordered_codes = []
+
+    if drivers is not None:
+        wanted = set(drivers)
+        ordered_codes = [c for c in ordered_codes if c in wanted]
+
+    rows: list[dict] = []
+    for code in ordered_codes:
+        driver_laps = session_obj.laps.pick_drivers(code)
+        if len(driver_laps) == 0:
+            continue
+        info = driver_lookup.get(code, {})
+        full_name = info.get("fullName", "")
+        team_name = info.get("teamName", "")
+        for _, lap in driver_laps.iterrows():
+            position = lap.get("Position") if hasattr(lap, "get") else lap["Position"]
+            lap_number = (
+                lap.get("LapNumber") if hasattr(lap, "get") else lap["LapNumber"]
+            )
+            if not pd.notna(position) or not pd.notna(lap_number):
+                continue
+            rows.append(
+                {
+                    "driver": code,
+                    "fullName": full_name,
+                    "teamName": team_name,
+                    "lapNumber": int(lap_number),
+                    "position": int(position),
+                }
+            )
+
+    return session_obj, rows
 
 
 @tool_handler

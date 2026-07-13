@@ -13,6 +13,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-07-13
+
+### Added
+
+- **Vega-Lite visualization tools (5)** — new `tools/visualization.py` module exposing chart tools that return ready-to-render **Vega-Lite v5** specs. Each response carries `vegaLiteSpec`, a self-contained `html` page (spec pre-embedded), a `png` data URI (rendered via `vl-convert`), and `htmlPath` — a temp file the server auto-opens in the default browser so the chart surfaces even in clients that ignore tool output. A `renderingInstructions` field keeps the model from inventing custom render tags.
+  - `get_lap_time_chart` — line+point trace of one driver's lap times, coloured by tyre compound; drops deleted/pit/SC laps by default (`include_outliers=True` to keep them); y-axis formatted `M:SS.mmm` via a Vega `labelExpr`.
+  - `get_pace_delta_chart` — horizontal-bar race-pace delta to the fastest driver, coloured by team; exposes the same `exclude_*` filter params as `get_race_pace`.
+  - `get_tyre_strategy_chart` — horizontal-Gantt stint chart across the field (or a single driver), sorted by finishing order, coloured by compound.
+  - `get_position_chart` — multi-line race positions by lap with a reversed y-axis (P1 on top); filters `NaN` positions (laps under SC).
+  - `get_speed_trace_chart` — two-driver speed trace along lap distance, in long format, coloured by fastf1 driver palette.
+- **`utils/vega_lite.py`** — shared chart infrastructure: `base_spec`, `driver_color_scale` / `team_color_scale` (via `fastf1.plotting`, `#888888` fallback), `compound_color_scale` (F1 compound palette, `HARD = #CCCCCC` so it stays visible on white), `spec_to_html` (self-contained vega-embed page), `spec_to_png_b64` (`vl-convert`), and `RENDERING_INSTRUCTIONS`.
+- **`examples/preview-charts.html`** — paste-and-render dev harness (CDN vega-embed, no build step) for eyeballing specs during development.
+
+### Changed
+
+- Refactored `tools/session.py` to extract `_compute_race_pace`, `_compute_stints`, and `_compute_lap_times` so the chart tools and the data tools share one computation path. Public tool return shapes are unchanged.
+
+### Dependencies
+
+- Added **`vl-convert-python >= 1.9.0`** — Rust-backed Vega-Lite → PNG rendering, no Node.js required.
+
+### Tests
+
+- 81 new tests across `test_visualization.py` (all 5 chart tools: spec shape, encoding, filtering, titles, error paths, HTML/PNG fields, y-axis `labelExpr`) and `test_vega_lite_helpers.py` (color scales, `spec_to_html`/`spec_to_png_b64`, and the `_compute_*` refactor contracts). The `*_spec_is_valid_v5` tests compile each spec through the vega-lite compiler (`vl-convert`) — real schema validation, not just key presence.
+
+---
+
 ## [0.2.0] - 2026-05-11
 
 ### Fixed
@@ -109,7 +136,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Desktop and VS Code Copilot configuration support
 - 20 unit and integration tests, 0 warnings
 
-[Unreleased]: https://github.com/Surya96t/fastf1-mcp/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Surya96t/fastf1-mcp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Surya96t/fastf1-mcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Surya96t/fastf1-mcp/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Surya96t/fastf1-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Surya96t/fastf1-mcp/releases/tag/v0.1.0
