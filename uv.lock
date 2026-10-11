@@ -496,6 +496,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastf1" },
     { name = "fastmcp" },
+    { name = "matplotlib" },
     { name = "pydantic-settings" },
 ]
 
@@ -510,6 +511,7 @@ dev = [
 requires-dist = [
     { name = "fastf1", specifier = ">=3.8.2,<4" },
     { name = "fastmcp", specifier = ">=3.2.0,<4" },
+    { name = "matplotlib", specifier = ">=3.8,<4" },
     { name = "pydantic-settings", specifier = ">=2.13.1,<3" },
 ]
 

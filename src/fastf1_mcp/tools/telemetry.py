@@ -259,9 +259,12 @@ async def compare_telemetry(
         compare_telemetry(2024, "Monaco", "Q", "VER", "LEC")
 
     Note:
-        timeDelta is the cumulative time gap at each distance point,
-        computed from speed integration. Positive = driver1 is ahead.
-        Comparison is aligned to driver1's distance axis.
+        timeDelta is the cumulative time gap (seconds) at each distance
+        point: driver1's elapsed time minus driver2's. Negative = driver1 is
+        ahead (reached that point sooner); positive = driver1 is behind.
+        This matches the sign of lapTimeDeltaSec and the sector deltaSec
+        values. Uses the recorded Time channel when present, otherwise
+        integrates speed. Comparison is aligned to driver1's distance axis.
     """
     logger.info(
         f"compare_telemetry: {year=}, {event=}, {session=}, {driver1=}, {driver2=}, {lap=}"
@@ -317,7 +320,8 @@ async def compare_telemetry(
 
     cum_time1 = _cumulative_time_at_distances(tel1, distances)
     cum_time2 = _cumulative_time_at_distances(tel2, distances)
-    time_delta = cum_time1 - cum_time2  # positive = driver1 ahead in elapsed time
+    # Negative = driver1 reached this distance sooner (ahead).
+    time_delta = cum_time1 - cum_time2
 
     comparison = [
         {
@@ -401,7 +405,7 @@ async def get_speed_trap_data(
     year: int,
     event: str | int,
     session: str,
-) -> list[dict]:
+) -> dict:
     """
     Get speed trap and top-speed data for all drivers in a session.
 

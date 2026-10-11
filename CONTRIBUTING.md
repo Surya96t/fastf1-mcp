@@ -75,16 +75,21 @@ src/fastf1_mcp/
 ├── prompts.py          # MCP prompt templates
 ├── resources.py        # MCP resource handlers
 ├── tools/
-│   ├── lookups.py      # Ergast API tools
-│   ├── session.py      # Session data tools
-│   ├── telemetry.py    # Telemetry tools
-│   └── utility.py      # Cache + list tools
+│   ├── lookups.py       # Ergast API tools
+│   ├── session.py       # Session data tools
+│   ├── telemetry.py     # Telemetry tools
+│   ├── corners.py       # Corner-by-corner analysis
+│   ├── race_events.py   # Race control messages + weather
+│   ├── race_analysis.py # Position changes + tyre degradation
+│   ├── charts.py        # PNG chart tools (matplotlib Figure API)
+│   └── utility.py       # Cache + list tools
 └── utils/
     ├── converters.py     # DataFrame → JSON helpers (to_jsonable, summaries)
     ├── ergast.py         # run_ergast() / first_frame() for Ergast calls
     ├── errors.py         # Structured error types
     ├── exports.py        # CSV export / auto-export helpers
-    └── session_loader.py # require_session() + @tool_handler
+    ├── session_loader.py # require_session() + @tool_handler
+    └── timing.py         # session time → lap mapping, SC/VSC periods
 ```
 
 ---

@@ -8,7 +8,8 @@ An [MCP](https://modelcontextprotocol.io) server that exposes Formula 1 data to 
 
 ## Features
 
-- **21 tools** covering standings, race results, lap times, telemetry, pit stops, and qualifying
+- **30 tools** covering standings, race results, lap times, telemetry, pit stops, qualifying, race control, weather, race progression, tyre degradation and corner analysis
+- **Charts** — speed traces, race position charts, tyre strategies and lap-time plots returned as PNG images Claude can show inline
 - **4 MCP resources** for schedule, driver, constructor, and circuit reference data
 - **5 guided prompts** for race recaps, qualifying analysis, strategy deep-dives, and weekend previews
 - Async-safe **LRU session cache** — repeat queries are instant after the first load
@@ -165,6 +166,27 @@ config, so files land in the user's project directory by default.
 | `compare_telemetry` | Compare telemetry between two drivers on the same session. |
 | `get_speed_trap_data` | Get speed trap and top-speed data for all drivers in a session. |
 | `get_sector_times` | Get best sector times and theoretical best lap for each driver. |
+| `get_corner_analysis` | Corner-by-corner apex/entry/exit speed, gear and brake point for one lap; with a second driver, where each gains or loses time. |
+
+### Race Analysis (FastF1 Live Timing — 2018-present)
+
+| Tool | Description |
+|---|---|
+| `get_race_control_messages` | Race control feed with a session summary: SC/VSC/red-flag periods (with laps), penalties, investigations, track-limits deletions. Filter by category, driver or lap range. |
+| `get_weather` | Air/track temperature, humidity, wind and rain over a session, with rain periods mapped to laps. |
+| `get_position_changes` | Lap-by-lap positions and gaps to the leader, grid→finish movement, laps led and lead changes. |
+| `get_tyre_degradation` | Fuel-corrected degradation rate per stint and per compound, plus compound crossover estimates. Works on races and practice long runs. |
+
+### Charts (PNG images)
+
+| Tool | Description |
+|---|---|
+| `plot_speed_trace` | Speed vs distance for one lap, or two drivers overlaid with a time-gap panel and corner markers. |
+| `plot_position_chart` | Race history chart — every driver's position by lap, up to 8 highlighted. |
+| `plot_tyre_strategy` | Stint bars coloured (and lettered) by compound, in finishing order. |
+| `plot_lap_times` | Lap time vs lap for up to 3 drivers, marker shape = compound. |
+
+All chart tools accept `save_path` to also write the PNG into the export directory.
 
 ### Utility
 
@@ -192,10 +214,10 @@ config, so files land in the user's project directory by default.
 
 | Prompt | Args | What it does |
 |---|---|---|
-| `race_recap` | `year, event` | Calls results + fastest laps + pit stops + stints, then narrates the race |
-| `qualifying_analysis` | `year, event` | Q breakdown + sector times + top laps analysis |
+| `race_recap` | `year, event` | Results + position changes + race control + fastest laps + stints, then narrates the race |
+| `qualifying_analysis` | `year, event` | Q breakdown + sector times + corner analysis of the pole lap |
 | `driver_comparison` | `year, driver1, driver2` | Season-level head-to-head: standings, races, qualifying |
-| `strategy_analysis` | `year, event` | Stints + pit timing + race pace — explains who won the strategy battle |
+| `strategy_analysis` | `year, event` | Stints + pit timing + tyre degradation + SC/VSC timing + race pace — explains who won the strategy battle |
 | `weekend_preview` | `year, event` | Circuit details + recent history + championship context |
 
 ---
@@ -211,6 +233,18 @@ Compare Verstappen and Leclerc's telemetry in 2024 Monaco qualifying
 
 Who had the fastest theoretical lap in 2024 Silverstone qualifying?
 → get_sector_times(2024, "Silverstone", "Q")
+
+Where did Norris lose pole to Verstappen in 2024 Spain qualifying?
+→ get_corner_analysis(2024, "Spain", "Q", "NOR", driver2="VER")
+
+Why did everyone pit on lap 34? Were there any penalties?
+→ get_race_control_messages(2024, "Hungary")
+
+How quickly did the mediums degrade compared to the hards?
+→ get_tyre_degradation(2024, "Bahrain")
+
+Show me how the 2024 Brazil race unfolded
+→ plot_position_chart(2024, "Brazil", highlight=["VER", "NOR", "RUS"])
 
 Show me the 2024 constructor standings after round 10
 → get_constructor_standings(2024, after_round=10)
@@ -241,7 +275,8 @@ uv run ruff check src/
 | Source | Coverage | Used for |
 |---|---|---|
 | [Ergast API](http://ergast.com/mrd/) (via FastF1) | 1950 – present | Standings, schedules, historical results, circuit info |
-| [FastF1 Live Timing](https://docs.fastf1.dev) | 2018 – present | Lap times, telemetry, qualifying, pit stops, tire data |
+| [FastF1 Live Timing](https://docs.fastf1.dev) | 2018 – present | Lap times, telemetry, qualifying, pit stops, tire data, race control, weather |
+| [MultiViewer](https://multiviewer.app/) (via FastF1) | 2018 – present | Circuit corner positions (corner analysis, speed-trace markers) |
 
 > **Note:** FastF1 session data is only available from 2018 onwards. Use `get_race_results_historical` for earlier seasons.
 

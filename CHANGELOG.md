@@ -11,7 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Race control & weather** — `get_race_control_messages` returns the race-control feed plus a session-wide summary: SC / VSC / red-flag periods with start/end laps (from the track-status feed), penalties, investigations (every car involved), and track-limits lap deletions per driver; filter by category, driver or lap range. `get_weather` returns air/track temperature, humidity and wind stats, rain periods mapped to laps, and an interval-sampled series.
+- **Race progression** — `get_position_changes`: lap-by-lap positions and race-history gaps to the leader, grid→finish movement, lap-1 gains, laps led, lead changes, and biggest gainers/losers. Long-format CSV export.
+- **Tyre degradation** — `get_tyre_degradation`: fuel-corrected degradation rate (s/lap) per stint from clean green-flag laps (outliers >107% dropped), per-compound medians, fresh-tyre pace and compound crossover estimates. Works for races and practice long runs.
+- **Corner analysis** — `get_corner_analysis`: apex speed, gear, approach/exit speed and brake point at every numbered corner (MultiViewer markers via FastF1), and per-corner time deltas between two drivers.
+- **Charts** — `plot_speed_trace`, `plot_position_chart`, `plot_tyre_strategy`, `plot_lap_times` return PNG images (plus a caption and structured metadata) that MCP clients render inline; `save_path` also writes the file. Colours use a fixed, colour-vision-checked palette; tyre compounds are always lettered as well as coloured.
+- Prompts `race_recap`, `qualifying_analysis` and `strategy_analysis` now use the new tools.
+- `matplotlib` is now a direct dependency (it was already installed via FastF1).
+
 ### Fixed
+
+- **`compare_telemetry` docs had the `timeDelta` sign backwards** — it said positive = driver1 ahead, but the value is driver1 − driver2 elapsed time, so negative = driver1 ahead (consistent with `lapTimeDeltaSec` and sector `deltaSec`). Values are unchanged; the docstring now matches them.
+- `get_speed_trap_data` return annotation corrected to `dict` (it has returned `{source, drivers}` since 0.2.0).
 
 - **Error dicts rejected by MCP clients** — tools annotated `-> list[dict]` (`get_session_results`, `get_fastest_laps`, `get_pit_stops`, the Ergast lookups, …) advertised an `outputSchema` that the structured error dict didn't match, so clients reported "Invalid structured content" instead of the error. `@tool_handler` now widens each tool's advertised return type to also allow the error shape.
 - **Ergast lookup tools raised raw exceptions** — `get_schedule`, `get_driver_standings`, `get_constructor_standings`, `get_driver_info`, `get_race_results_historical` and `get_circuit_info` now return a `data_unavailable` error dict when the Ergast/Jolpica API fails, like every other tool.
@@ -23,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Internal: new `utils/ergast.py` (`run_ergast`, `first_frame`) and `converters.to_jsonable` / `records_to_json` shared by tools and resources. `list_events`, `list_drivers`, `get_cache_status` and `clear_cache` now use `@tool_handler`; `list_drivers(event=…)` loads through `require_session` (gains the `session_not_held` error).
 - Docs: `CONTRIBUTING.md` now states Python 3.12+, documents how tools are actually registered (`mcp.tool(fn)` in `server.py`) and lists all `utils/` modules; `examples/usage_examples.md` uses the `fastf1-mcp-server` command.
+
+### Tests
+
+- 119 tests passing (up from 68). New synthetic race fixture with known ground truth (degradation rates, SC window, pit laps, apex speeds) so the analysis tools are checked for *recovering* the right answers; chart tools are exercised end-to-end through an MCP client (PNG content, captions, `save_path`, input validation); error dicts are validated against each tool's advertised output schema.
 
 ---
 
