@@ -7,6 +7,7 @@ from functools import partial
 from typing import Any
 
 import fastf1
+import pandas as pd
 from fastf1.exceptions import DataNotLoadedError
 
 from .config import settings
@@ -31,6 +32,15 @@ _LOAD_CHECKS = {"laps": "laps", "telemetry": "car_data"}
 
 def _verify_loaded(session: Any, flags: dict[str, bool]) -> None:
     missing = []
+    if flags.get("results"):
+        # A failed download leaves `results` as an empty table rather than
+        # raising — every session that actually ran has a classification.
+        try:
+            results = session.results
+            if isinstance(results, pd.DataFrame) and results.empty:
+                missing.append("results")
+        except DataNotLoadedError:
+            missing.append("results")
     for flag, attr in _LOAD_CHECKS.items():
         if not flags.get(flag):
             continue
@@ -175,7 +185,8 @@ class SessionManager:
                 messages=load_messages,
             )
             await loop.run_in_executor(None, load_func)
-            _verify_loaded(session, requested)  # raises before caching
+            # raises before caching
+            _verify_loaded(session, {**requested, "results": True})
 
             logger.info(f"Session loaded: {year} {event} {session_type}")
 

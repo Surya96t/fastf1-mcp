@@ -249,6 +249,23 @@ async def test_failed_load_raises_and_is_not_cached():
 
 
 @pytest.mark.asyncio
+async def test_failed_results_download_is_not_cached():
+    # get_session_results loads without laps; FastF1 then leaves an empty
+    # results table instead of raising.
+    import pandas as pd
+
+    session = MagicMock()
+    session.load = MagicMock(return_value=None)
+    session.results = pd.DataFrame()
+    manager = SessionManager(max_sessions=5)
+    with patch("fastf1_mcp.session_manager.fastf1.get_session", return_value=session):
+        with pytest.raises(SessionDataUnavailable) as exc:
+            await manager.get_session(2024, "Monza", "R", load_laps=False)
+    assert exc.value.missing == ["results"]
+    assert manager.get_cache_status()["sessions_cached"] == 0
+
+
+@pytest.mark.asyncio
 async def test_require_session_maps_failed_load_to_data_unavailable():
     with patch(
         "fastf1_mcp.utils.session_loader.session_manager.get_session",

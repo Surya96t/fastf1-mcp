@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Failed FastF1 downloads crashed tools and poisoned the cache** — FastF1's `Session.load()` only logs download failures, so an unreachable live-timing API (or a session whose data isn't published yet) surfaced later as a raw `DataNotLoadedError` from every session tool, and the half-loaded session stayed cached. The session manager now verifies that laps/telemetry actually loaded, never caches a failed load, and tools return a `data_unavailable` error explaining the likely cause.
+- **Failed FastF1 downloads crashed tools and poisoned the cache** — FastF1's `Session.load()` only logs download failures, so an unreachable live-timing API (or a session whose data isn't published yet) surfaced later as a raw `DataNotLoadedError` from every session tool, and the half-loaded session stayed cached. The session manager now verifies that results/laps/telemetry actually loaded (a failed results download leaves an empty table, which made `get_session_results` silently return `[]`), never caches a failed load, and tools return a `data_unavailable` error explaining the likely cause.
+- FastF1 warnings were logged twice (FastF1's own handler plus ours).
 
 - **`compare_telemetry` docs had the `timeDelta` sign backwards** — it said positive = driver1 ahead, but the value is driver1 − driver2 elapsed time, so negative = driver1 ahead (consistent with `lapTimeDeltaSec` and sector `deltaSec`). Values are unchanged; the docstring now matches them.
 - `get_speed_trap_data` return annotation corrected to `dict` (it has returned `{source, drivers}` since 0.2.0).
@@ -48,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- 217 tests passing (up from 68). New synthetic race fixture with known ground truth (degradation rates, SC window, pit laps, apex speeds) so the analysis tools are checked for *recovering* the right answers; chart tools are exercised end-to-end through an MCP client (PNG content, captions, `save_path`, input validation); error dicts are validated against each tool's advertised output schema. The replay bridge is tested against a local TCP server speaking the f1-race-replay protocol (including ~3 MB messages) and was also checked against f1-race-replay's own `TelemetryStreamServer`.
+- 218 tests passing (up from 68). New synthetic race fixture with known ground truth (degradation rates, SC window, pit laps, apex speeds) so the analysis tools are checked for *recovering* the right answers; chart tools are exercised end-to-end through an MCP client (PNG content, captions, `save_path`, input validation); error dicts are validated against each tool's advertised output schema. The replay bridge is tested against a local TCP server speaking the f1-race-replay protocol (including ~3 MB messages) and was also checked against f1-race-replay's own `TelemetryStreamServer`.
 
 ---
 
