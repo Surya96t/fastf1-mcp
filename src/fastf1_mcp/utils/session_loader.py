@@ -1,7 +1,9 @@
 """Shared helpers for loading FastF1 sessions inside tool handlers."""
 
 import functools
+import inspect
 import logging
+import typing
 from collections.abc import Awaitable, Callable
 from typing import Any, ParamSpec, TypeVar
 
@@ -90,5 +92,14 @@ def tool_handler(func: Callable[P, Awaitable[Any]]) -> Callable[P, Awaitable[Any
             return await func(*args, **kwargs)
         except FastF1MCPError as e:
             return e.to_dict()
+
+    # FastMCP derives each tool's outputSchema from the return annotation, and
+    # MCP clients validate results against it. A tool declared `-> list[dict]`
+    # would therefore have its error dict rejected as invalid output, so widen
+    # the advertised return type to also allow the error shape.
+    sig = inspect.signature(func)
+    ret = typing.get_type_hints(func).get("return", sig.return_annotation)
+    if ret is not inspect.Signature.empty and ret is not dict:
+        wrapper.__signature__ = sig.replace(return_annotation=ret | dict)  # type: ignore[attr-defined]
 
     return wrapper

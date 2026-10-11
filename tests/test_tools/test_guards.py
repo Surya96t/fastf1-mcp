@@ -59,3 +59,38 @@ async def test_year_guard_rejects_pre_2018(call):
     assert isinstance(result, dict)
     assert result.get("error") is True
     assert result.get("code") == YEAR_OUT_OF_RANGE
+
+
+# ---------------------------------------------------------------------------
+# Error dicts must satisfy each tool's advertised outputSchema
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool, args",
+    [
+        ("get_session_results", {"year": 2017, "event": "Monaco"}),
+        ("get_pit_stops", {"year": 2017, "event": "Monaco"}),
+        ("get_fastest_laps", {"year": 2017, "event": "Monaco"}),
+        (
+            "get_lap_times",
+            {"year": 2017, "event": "Monaco", "session": "R", "driver": "VER"},
+        ),
+    ],
+)
+async def test_error_dict_passes_client_output_validation(tool, args):
+    # Regression: tools annotated `-> list[dict]` advertised an outputSchema
+    # that rejected the error dict, so MCP clients saw a validation failure
+    # instead of the structured error.
+    from fastmcp import Client
+
+    from fastf1_mcp.server import mcp
+
+    async with Client(mcp) as client:
+        result = await client.call_tool(tool, args)
+
+    assert result.structured_content is not None
+    payload = result.structured_content.get("result", result.structured_content)
+    assert payload["error"] is True
+    assert payload["code"] == YEAR_OUT_OF_RANGE

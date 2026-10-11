@@ -1,15 +1,18 @@
 import asyncio
 import logging
-from functools import partial
 
 from fastf1.ergast import Ergast
 
 from ..session_manager import session_manager
+from ..utils.converters import records_to_json, to_jsonable
+from ..utils.ergast import first_frame, run_ergast
 from ..utils.errors import ErrorCode, FastF1MCPError
+from ..utils.session_loader import require_session, tool_handler
 
 logger = logging.getLogger(__name__)
 
 
+@tool_handler
 async def list_events(year: int) -> list[dict]:
     """
     List all events in a season.
@@ -36,35 +39,26 @@ async def list_events(year: int) -> list[dict]:
         event names to pass to other tools.
     """
     logger.info(f"list_events: {year=}")
-    loop = asyncio.get_running_loop()
-    ergast = Ergast()
+    schedule = await run_ergast(
+        Ergast().get_race_schedule,
+        what=f"schedule for {year}",
+        season=year,
+        limit=30,
+    )
 
-    try:
-        schedule = await loop.run_in_executor(
-            None,
-            partial(ergast.get_race_schedule, season=year, limit=30),
-        )
-    except Exception as e:
-        logger.error(f"Failed to fetch schedule for {year}: {e}")
-        return FastF1MCPError(
-            ErrorCode.DATA_UNAVAILABLE,
-            f"Could not fetch schedule for {year}: {e}",
-            suggestions=["Check that the year is valid (1950-present)"],
-        ).to_dict()
-
-    records = schedule.to_dict(orient="records")
     return [
         {
             "round": r.get("round"),
             "eventName": r.get("raceName"),
             "country": r.get("country"),
             "circuitName": r.get("circuitName"),
-            "date": str(r.get("raceDate")) if r.get("raceDate") else None,
+            "date": str(r["raceDate"])[:10] if r.get("raceDate") else None,
         }
-        for r in records
+        for r in records_to_json(first_frame(schedule))
     ]
 
 
+@tool_handler
 async def list_drivers(
     year: int,
     event: str | int | None = None,
@@ -98,24 +92,13 @@ async def list_drivers(
 
     if event is not None:
         if year < 2018:
-            return FastF1MCPError(
+            raise FastF1MCPError(
                 ErrorCode.YEAR_OUT_OF_RANGE,
                 f"Event-filtered driver list requires 2018+, got {year}",
                 suggestions=["Omit the event parameter for pre-2018 seasons"],
-            ).to_dict()
-
-        try:
-            session_obj = await session_manager.get_session(
-                year, event, "R", load_laps=False
             )
-        except Exception as e:
-            logger.error(f"Failed to load session: {e}")
-            return FastF1MCPError(
-                ErrorCode.SESSION_NOT_FOUND,
-                f"Could not load session: {year} {event}. {e}",
-                suggestions=["Use list_events(year) to see valid event names"],
-            ).to_dict()
 
+        session_obj = await require_session(year, event, "R", load_laps=False)
         results = session_obj.results
         drivers = []
         for _, row in results.iterrows():
@@ -128,46 +111,32 @@ async def list_drivers(
                     "number": str(row.get("DriverNumber", "")),
                 }
             )
-        return drivers
+        return to_jsonable(drivers)
 
     # Season-level: use Ergast. Driver info gives biographical fields;
     # driver standings gives the team mapping. Fetch both in parallel and
     # merge so the output includes the team a driver actually raced for.
-    loop = asyncio.get_running_loop()
     ergast = Ergast()
+    info_result, standings_result = await asyncio.gather(
+        run_ergast(
+            ergast.get_driver_info,
+            what=f"driver list for {year}",
+            season=year,
+            limit=1000,
+        ),
+        run_ergast(
+            ergast.get_driver_standings,
+            what=f"driver standings for {year}",
+            season=year,
+        ),
+        return_exceptions=True,
+    )
 
-    try:
-        info_result, standings_result = await asyncio.gather(
-            loop.run_in_executor(
-                None,
-                partial(ergast.get_driver_info, season=year, limit=1000),
-            ),
-            loop.run_in_executor(
-                None,
-                partial(ergast.get_driver_standings, season=year),
-            ),
-            return_exceptions=True,
-        )
-    except Exception as e:
-        logger.error(f"Failed to fetch drivers for {year}: {e}")
-        return FastF1MCPError(
-            ErrorCode.DATA_UNAVAILABLE,
-            f"Could not fetch driver list for {year}: {e}",
-            suggestions=["Check that the year is valid (1950-present)"],
-        ).to_dict()
+    # Driver info is required; standings only add the team column.
+    if isinstance(info_result, BaseException):
+        raise info_result
 
-    if isinstance(info_result, Exception):
-        logger.error(f"Failed to fetch driver info for {year}: {info_result}")
-        return FastF1MCPError(
-            ErrorCode.DATA_UNAVAILABLE,
-            f"Could not fetch driver list for {year}: {info_result}",
-            suggestions=["Check that the year is valid (1950-present)"],
-        ).to_dict()
-
-    if hasattr(info_result, "content") and len(info_result.content) > 0:
-        info_df = info_result.content[0]
-    else:
-        info_df = info_result
+    info_df = first_frame(info_result)
 
     # Build code → team lookup from standings; tolerate a standings failure.
     team_by_code: dict[str, str] = {}
@@ -188,20 +157,23 @@ async def list_drivers(
         )
 
     drivers = []
-    for _, row in info_df.iterrows():
-        code = row.get("driverCode", "")
+    for row in records_to_json(info_df):
+        code = row.get("driverCode") or ""
+        number = row.get("permanentNumber")
         drivers.append(
             {
                 "code": code,
-                "fullName": f"{row.get('givenName', '')} {row.get('familyName', '')}".strip(),
-                "nationality": row.get("driverNationality", ""),
-                "team": team_by_code.get(code, ""),
-                "number": str(row.get("permanentNumber", "")),
+                "fullName": f"{row.get('givenName') or ''} "
+                f"{row.get('familyName') or ''}".strip(),
+                "nationality": row.get("driverNationality") or "",
+                "team": team_by_code.get(code, "") if code else "",
+                "number": str(number) if number is not None else "",
             }
         )
     return drivers
 
 
+@tool_handler
 async def get_cache_status() -> dict:
     """
     Check server in-memory session cache status.
@@ -252,6 +224,7 @@ def _disk_cache_size(path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
+@tool_handler
 async def clear_cache(
     year: int | None = None,
     event: str | None = None,
@@ -277,13 +250,13 @@ async def clear_cache(
     logger.info(f"clear_cache: {year=}, {event=}")
 
     if event is not None and year is None:
-        return FastF1MCPError(
+        raise FastF1MCPError(
             ErrorCode.INVALID_PARAMETER,
             "clear_cache: event filter requires year to be set",
             suggestions=[
                 "Pass year alongside event, e.g. clear_cache(2024, 'Monaco')",
             ],
-        ).to_dict()
+        )
 
     cleared = session_manager.clear_cache(year, event)
     remaining = len(session_manager._cache)

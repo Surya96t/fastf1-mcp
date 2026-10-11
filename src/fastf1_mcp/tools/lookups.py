@@ -1,14 +1,16 @@
-import asyncio
 import logging
-from functools import partial
 
+import pandas as pd
 from fastf1.ergast import Ergast
 
-from ..utils.converters import standings_to_json
+from ..utils.converters import records_to_json, standings_to_json, to_jsonable
+from ..utils.ergast import first_frame, run_ergast
+from ..utils.session_loader import tool_handler
 
 logger = logging.getLogger(__name__)
 
 
+@tool_handler
 async def get_schedule(year: int) -> list[dict]:
     """
     Get the F1 race calendar for a season.
@@ -30,27 +32,26 @@ async def get_schedule(year: int) -> list[dict]:
         ]
     """
     logger.info(f"get_schedule: {year=}")
-    loop = asyncio.get_running_loop()
-    ergast = Ergast()
-
-    schedule = await loop.run_in_executor(
-        None,
-        partial(ergast.get_race_schedule, season=year, limit=30),
+    schedule = await run_ergast(
+        Ergast().get_race_schedule,
+        what=f"schedule for {year}",
+        season=year,
+        limit=30,
     )
 
-    records = schedule.to_dict(orient="records")
     return [
         {
             "round": r.get("round"),
             "raceName": r.get("raceName"),
             "circuitName": r.get("circuitName"),
             "country": r.get("country"),
-            "date": str(r.get("raceDate")) if r.get("raceDate") else None,
+            "date": _date_str(r.get("raceDate")),
         }
-        for r in records
+        for r in records_to_json(first_frame(schedule))
     ]
 
 
+@tool_handler
 async def get_driver_standings(
     year: int,
     after_round: int | None = None,
@@ -77,17 +78,17 @@ async def get_driver_standings(
         ]
     """
     logger.info(f"get_driver_standings: {year=}, {after_round=}")
-    loop = asyncio.get_running_loop()
-    ergast = Ergast()
-
-    standings = await loop.run_in_executor(
-        None,
-        partial(ergast.get_driver_standings, season=year, round=after_round),
+    standings = await run_ergast(
+        Ergast().get_driver_standings,
+        what=f"driver standings for {year}",
+        season=year,
+        round=after_round,
     )
 
     return standings_to_json(standings, "driver")
 
 
+@tool_handler
 async def get_constructor_standings(
     year: int,
     after_round: int | None = None,
@@ -107,17 +108,17 @@ async def get_constructor_standings(
         points, wins
     """
     logger.info(f"get_constructor_standings: {year=}, {after_round=}")
-    loop = asyncio.get_running_loop()
-    ergast = Ergast()
-
-    standings = await loop.run_in_executor(
-        None,
-        partial(ergast.get_constructor_standings, season=year, round=after_round),
+    standings = await run_ergast(
+        Ergast().get_constructor_standings,
+        what=f"constructor standings for {year}",
+        season=year,
+        round=after_round,
     )
 
     return standings_to_json(standings, "constructor")
 
 
+@tool_handler
 async def get_driver_info(
     driver_id: str | None = None,
     year: int | None = None,
@@ -142,27 +143,18 @@ async def get_driver_info(
         for biographical details.
     """
     logger.info(f"get_driver_info: {driver_id=}, {year=}")
-    loop = asyncio.get_running_loop()
-    ergast = Ergast()
-
-    result = await loop.run_in_executor(
-        None,
-        partial(
-            ergast.get_driver_info,
-            season=year,
-            driver=driver_id,
-            limit=1000,
-        ),
+    result = await run_ergast(
+        Ergast().get_driver_info,
+        what="driver info",
+        season=year,
+        driver=driver_id,
+        limit=1000,
     )
 
-    if hasattr(result, "content") and len(result.content) > 0:
-        df = result.content[0]
-    else:
-        df = result
-
-    return df.to_dict(orient="records")
+    return records_to_json(first_frame(result))
 
 
+@tool_handler
 async def get_race_results_historical(year: int, round_num: int) -> list[dict]:
     """
     Get historical race results (pre-2018 or when session data unavailable).
@@ -182,39 +174,41 @@ async def get_race_results_historical(year: int, round_num: int) -> list[dict]:
         For 2018+ races, prefer get_session_results which has more detail.
     """
     logger.info(f"get_race_results_historical: {year=}, {round_num=}")
-    loop = asyncio.get_running_loop()
-    ergast = Ergast()
-
-    results = await loop.run_in_executor(
-        None,
-        partial(ergast.get_race_results, season=year, round=round_num),
+    results = await run_ergast(
+        Ergast().get_race_results,
+        what=f"race results for {year} round {round_num}",
+        season=year,
+        round=round_num,
     )
 
-    if hasattr(results, "content") and len(results.content) > 0:
-        df = results.content[0]
-    else:
-        df = results
-
     records = []
-    for _, row in df.iterrows():
+    for _, row in first_frame(results).iterrows():
+        finishing_time = row.get("finishingTime")
         records.append(
-            {
-                "position": row.get("position"),
-                "driverCode": row.get("driverCode", ""),
-                "givenName": row.get("givenName", ""),
-                "familyName": row.get("familyName", ""),
-                "constructorName": row.get("constructorName", ""),
-                "grid": row.get("grid"),
-                "laps": row.get("laps"),
-                "status": row.get("status", ""),
-                "points": row.get("points"),
-                "time": str(row["finishingTime"]) if row.get("finishingTime") else None,
-            }
+            to_jsonable(
+                {
+                    "position": row.get("position"),
+                    "driverCode": row.get("driverCode", ""),
+                    "givenName": row.get("givenName", ""),
+                    "familyName": row.get("familyName", ""),
+                    "constructorName": row.get("constructorName", ""),
+                    "grid": row.get("grid"),
+                    "laps": row.get("laps"),
+                    "status": row.get("status", ""),
+                    "points": row.get("points"),
+                    # NaT is truthy, so check with notna — otherwise DNFs
+                    # come back as the literal string "NaT".
+                    "time": str(finishing_time)
+                    if finishing_time is not None and pd.notna(finishing_time)
+                    else None,
+                }
+            )
         )
 
     return records
 
 
+@tool_handler
 async def get_circuit_info(
     circuit_id: str | None = None,
     year: int | None = None,
@@ -233,24 +227,21 @@ async def get_circuit_info(
         Circuit info: circuitId, circuitName, locality, country, lat, long
     """
     logger.info(f"get_circuit_info: {circuit_id=}, {year=}")
-    loop = asyncio.get_running_loop()
-    ergast = Ergast()
-
-    result = await loop.run_in_executor(
-        None,
-        partial(
-            ergast.get_circuits,
-            season=year,
-            limit=100,
-        ),
+    result = await run_ergast(
+        Ergast().get_circuits,
+        what="circuit info",
+        season=year,
+        limit=100,
     )
 
-    if hasattr(result, "content") and len(result.content) > 0:
-        df = result.content[0]
-    else:
-        df = result
-
-    records = df.to_dict(orient="records")
+    records = records_to_json(first_frame(result))
     if circuit_id is not None:
         records = [r for r in records if r.get("circuitId") == circuit_id]
     return records
+
+
+def _date_str(value) -> str | None:
+    """Render an ISO timestamp/date as `YYYY-MM-DD` (None-safe)."""
+    if not value:
+        return None
+    return str(value)[:10]

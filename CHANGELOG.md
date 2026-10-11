@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Error dicts rejected by MCP clients** — tools annotated `-> list[dict]` (`get_session_results`, `get_fastest_laps`, `get_pit_stops`, the Ergast lookups, …) advertised an `outputSchema` that the structured error dict didn't match, so clients reported "Invalid structured content" instead of the error. `@tool_handler` now widens each tool's advertised return type to also allow the error shape.
+- **Ergast lookup tools raised raw exceptions** — `get_schedule`, `get_driver_standings`, `get_constructor_standings`, `get_driver_info`, `get_race_results_historical` and `get_circuit_info` now return a `data_unavailable` error dict when the Ergast/Jolpica API fails, like every other tool.
+- **Non-JSON values in Ergast responses** — `NaN` (e.g. missing driver codes / permanent numbers before 2005), `NaT` and numpy integers either broke FastMCP serialisation or produced invalid JSON. Ergast-backed tools and resources now normalise them (`None`, ISO strings, Python ints).
+- **`get_race_results_historical` `time` was `"NaT"` for non-finishers** — now `null`.
+- **`list_drivers` returned `"nan"` as the number** for drivers without a permanent number — now `""`.
+
+### Changed
+
+- Internal: new `utils/ergast.py` (`run_ergast`, `first_frame`) and `converters.to_jsonable` / `records_to_json` shared by tools and resources. `list_events`, `list_drivers`, `get_cache_status` and `clear_cache` now use `@tool_handler`; `list_drivers(event=…)` loads through `require_session` (gains the `session_not_held` error).
+- Docs: `CONTRIBUTING.md` now states Python 3.12+, documents how tools are actually registered (`mcp.tool(fn)` in `server.py`) and lists all `utils/` modules; `examples/usage_examples.md` uses the `fastf1-mcp-server` command.
+
 ---
 
 ## [0.2.0] - 2026-05-11

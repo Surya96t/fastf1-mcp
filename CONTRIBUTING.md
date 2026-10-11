@@ -6,7 +6,7 @@ Thank you for considering a contribution! This guide explains how to set up the 
 
 ## Development Setup
 
-**Requirements:** Python 3.10+, [uv](https://docs.astral.sh/uv/)
+**Requirements:** Python 3.12+, [uv](https://docs.astral.sh/uv/)
 
 ```bash
 git clone https://github.com/Surya96t/fastf1-mcp.git
@@ -71,6 +71,7 @@ src/fastf1_mcp/
 ├── server.py           # MCP server — tool/resource/prompt registration
 ├── session_manager.py  # Async LRU cache for FastF1 sessions
 ├── config.py           # Pydantic settings (FASTF1_MCP_* env vars)
+├── logging_config.py   # stderr logging setup
 ├── prompts.py          # MCP prompt templates
 ├── resources.py        # MCP resource handlers
 ├── tools/
@@ -79,16 +80,26 @@ src/fastf1_mcp/
 │   ├── telemetry.py    # Telemetry tools
 │   └── utility.py      # Cache + list tools
 └── utils/
-    ├── converters.py   # DataFrame → JSON helpers
-    └── errors.py       # Structured error types
+    ├── converters.py     # DataFrame → JSON helpers (to_jsonable, summaries)
+    ├── ergast.py         # run_ergast() / first_frame() for Ergast calls
+    ├── errors.py         # Structured error types
+    ├── exports.py        # CSV export / auto-export helpers
+    └── session_loader.py # require_session() + @tool_handler
 ```
 
 ---
 
 ## Adding a New Tool
 
-1. Implement the function in the appropriate `tools/*.py` module
-2. Register it in `server.py` using `@mcp.tool()`
+1. Implement the function in the appropriate `tools/*.py` module as an
+   `async def` decorated with `@tool_handler`. Raise `FastF1MCPError` for
+   expected failures (the decorator turns it into the standard error dict),
+   load sessions with `require_session()`, and wrap Ergast calls in
+   `run_ergast()`. Return plain JSON types — pass DataFrame records through
+   `to_jsonable()` / `records_to_json()` so NaN, NaT and numpy scalars never
+   reach the client.
+2. Register it in `server.py` with `mcp.tool(your_function)` (tools are
+   defined as plain functions and registered there, not decorated in place)
 3. Add an entry to the tool table in `README.md`
 4. Add at least one test in `tests/test_tools/`
 5. Add a `CHANGELOG.md` entry under `[Unreleased]`
