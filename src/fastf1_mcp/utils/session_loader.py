@@ -7,7 +7,7 @@ import typing
 from collections.abc import Awaitable, Callable
 from typing import Any, ParamSpec, TypeVar
 
-from ..session_manager import session_manager
+from ..session_manager import SessionDataUnavailable, session_manager
 from .errors import ErrorCode, FastF1MCPError
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,20 @@ async def require_session(
         )
     except FastF1MCPError:
         raise
+    except SessionDataUnavailable as e:
+        logger.error(f"Session data unavailable {year} {event} {session}: {e}")
+        raise FastF1MCPError(
+            ErrorCode.DATA_UNAVAILABLE,
+            f"FastF1 could not download {' and '.join(e.missing)} data for "
+            f"{year} {event} {session}.",
+            suggestions=[
+                "The F1 live-timing API may be unreachable from this machine "
+                "(check network/proxy access to livetiming.formula1.com)",
+                "Data for a session is usually published 30-60 minutes after "
+                "it ends — retry later for very recent sessions",
+                "plot_circuit draws the circuit offline from stored outlines",
+            ],
+        ) from e
     except Exception as e:
         logger.error(f"Failed to load session {year} {event} {session}: {e}")
         if _is_session_not_held(e):

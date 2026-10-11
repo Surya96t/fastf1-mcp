@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Real circuit maps, offline** — `plot_circuit` draws any F1 circuit from bundled outline data ([bacinger/f1-circuits](https://github.com/bacinger/f1-circuits), MIT; 40 circuits incl. every venue used 2018–2026 and the 2026 Madring), by name, Grand Prix, nickname or year + round, or a whole season's calendar as a sheet. The data was validated before bundling: outline lengths match the official figures to within 1.5% for every modern circuit, the direction of racing matches circuit guides (Marina Bay and Paul Ricard are stored reversed in the source and are flipped), and each outline starts on the start/finish line with Turn 1 bending the right way.
+- `plot_track_map` falls back to the stored outline (with a note) when FastF1 telemetry can't be downloaded.
 - **Track map** — `plot_track_map` draws the circuit from FastF1 position data: a lap's racing line coloured by speed or gear with numbered corners, DRS zones and direction of travel, or (`at_lap=N`) every car's position on track as the leader starts lap N with the running order. Uses the official map rotation from the circuit data.
 - **Live championship projection** — `get_championship_projection` gives drivers' and constructors' standings as if the race ended at any lap: baseline from the previous round's official standings (plus same-weekend sprint points), race points from the running order (sprint table for sprints; +1 fastest-lap point for 2019–2024 Grands Prix), official points on the final lap, and optionally the projected championship leader after every lap.
 - **DRS zones** — `get_drs_zones` infers zones from where the DRS flap actually opened on the fastest laps of up to 8 drivers (clustered, with zones straddling the start/finish line merged) and names the surrounding corners. `plot_speed_trace` shades DRS-open sections and the track map highlights the zones.
@@ -27,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `matplotlib` is now a direct dependency (it was already installed via FastF1).
 
 ### Fixed
+
+- **Failed FastF1 downloads crashed tools and poisoned the cache** — FastF1's `Session.load()` only logs download failures, so an unreachable live-timing API (or a session whose data isn't published yet) surfaced later as a raw `DataNotLoadedError` from every session tool, and the half-loaded session stayed cached. The session manager now verifies that laps/telemetry actually loaded, never caches a failed load, and tools return a `data_unavailable` error explaining the likely cause.
 
 - **`compare_telemetry` docs had the `timeDelta` sign backwards** — it said positive = driver1 ahead, but the value is driver1 − driver2 elapsed time, so negative = driver1 ahead (consistent with `lapTimeDeltaSec` and sector `deltaSec`). Values are unchanged; the docstring now matches them.
 - `get_speed_trap_data` return annotation corrected to `dict` (it has returned `{source, drivers}` since 0.2.0).
@@ -44,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- 146 tests passing (up from 68). New synthetic race fixture with known ground truth (degradation rates, SC window, pit laps, apex speeds) so the analysis tools are checked for *recovering* the right answers; chart tools are exercised end-to-end through an MCP client (PNG content, captions, `save_path`, input validation); error dicts are validated against each tool's advertised output schema. The replay bridge is tested against a local TCP server speaking the f1-race-replay protocol (including ~3 MB messages) and was also checked against f1-race-replay's own `TelemetryStreamServer`.
+- 217 tests passing (up from 68). New synthetic race fixture with known ground truth (degradation rates, SC window, pit laps, apex speeds) so the analysis tools are checked for *recovering* the right answers; chart tools are exercised end-to-end through an MCP client (PNG content, captions, `save_path`, input validation); error dicts are validated against each tool's advertised output schema. The replay bridge is tested against a local TCP server speaking the f1-race-replay protocol (including ~3 MB messages) and was also checked against f1-race-replay's own `TelemetryStreamServer`.
 
 ---
 

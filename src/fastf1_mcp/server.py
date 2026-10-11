@@ -56,6 +56,7 @@ from .tools.charts import (
     plot_tyre_strategy,
     plot_lap_times,
     plot_track_map,
+    plot_circuit,
 )
 from .tools.track import get_drs_zones
 from .tools.championship import get_championship_projection
@@ -167,6 +168,7 @@ mcp.tool(plot_position_chart)
 mcp.tool(plot_tyre_strategy)
 mcp.tool(plot_lap_times)
 mcp.tool(plot_track_map)
+mcp.tool(plot_circuit)
 
 # =============================================================================
 # Live Replay Tools (f1-race-replay telemetry stream)

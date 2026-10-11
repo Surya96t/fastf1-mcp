@@ -31,6 +31,7 @@ from matplotlib.ticker import FuncFormatter, MaxNLocator
 from mcp.types import TextContent
 
 from ..utils.converters import build_driver_lookup
+from ..utils.circuits import load_circuits, resolve_circuit, smooth_loop
 from ..utils.errors import ErrorCode, FastF1MCPError
 from ..utils.exports import _display_path, resolve_export_path
 from ..utils.session_loader import require_session, tool_handler
@@ -1092,6 +1093,36 @@ def _draw_track_positions(outline, cars, highlight, marks, title, subtitle) -> b
     return buf.getvalue()
 
 
+async def _stored_outline_fallback(
+    error: FastF1MCPError, year: int, event, at_lap, save_path
+) -> ToolResult | None:
+    """
+    When FastF1 can't provide a lap (offline, data not published), draw the
+    stored circuit outline instead — trace mode only, 2018+ layouts only.
+    """
+    if at_lap is not None or error.code not in (
+        ErrorCode.SESSION_NOT_FOUND,
+        ErrorCode.DATA_UNAVAILABLE,
+    ):
+        return None
+    try:
+        c = resolve_circuit(event, year)
+    except FastF1MCPError:
+        return None
+    reason = error.message.split(". ")[0][:160].rstrip(".")
+    note = (
+        "FastF1 telemetry unavailable — showing the stored circuit outline "
+        "(no speed/gear colouring, corners or DRS zones)."
+    )
+    png = await _render_stored_circuit(c, note)
+    meta = {"mode": "stored-outline", "fallbackReason": reason, **_circuit_meta(c)}
+    caption = (
+        f"{c.name} — {_circuit_subtitle(c)}. Stored outline: FastF1 telemetry "
+        f"was unavailable ({reason})."
+    )
+    return _result(png, caption, meta, save_path, "plot_track_map", [year, c.id])
+
+
 async def _reference_lap(session_obj, driver: str | None, lap):
     """Telemetry of the requested lap (default: the session's fastest lap)."""
     if driver is None:
@@ -1239,9 +1270,15 @@ async def plot_track_map(
         f"plot_track_map: {year=}, {event=}, {session=}, {driver=}, {lap=}, "
         f"{color_by=}, {at_lap=}"
     )
-    session_obj = await require_session(year, event, session, with_telemetry=True)
-    lookup = build_driver_lookup(session_obj)
-    ref_driver, lap_row, tel = await _reference_lap(session_obj, driver, lap)
+    try:
+        session_obj = await require_session(year, event, session, with_telemetry=True)
+        lookup = build_driver_lookup(session_obj)
+        ref_driver, lap_row, tel = await _reference_lap(session_obj, driver, lap)
+    except FastF1MCPError as e:
+        fallback = await _stored_outline_fallback(e, year, event, at_lap, save_path)
+        if fallback is None:
+            raise
+        return fallback
 
     rotation, corners = 0.0, None
     try:
@@ -1378,3 +1415,265 @@ async def plot_track_map(
         "plot_track_map",
         [year, event, session, f"lap-{at_lap}"],
     )
+
+
+# ---------------------------------------------------------------------------
+# Stored circuit outlines (offline)
+# ---------------------------------------------------------------------------
+
+ASPHALT = "#3d3c39"
+
+
+def _nice_scale(extent_m: float) -> int:
+    for step in (100, 200, 250, 500, 1000, 2000):
+        if step >= extent_m / 8:
+            return step
+    return 2000
+
+
+def _draw_outline(ax, xy: np.ndarray, *, width: float = 8, arrow: bool = True) -> None:
+    """Track ribbon with a start/finish bar and a direction arrow."""
+    loop = np.vstack([xy, xy[:1]])
+    ax.plot(
+        loop[:, 0],
+        loop[:, 1],
+        color=ASPHALT,
+        linewidth=width,
+        solid_capstyle="round",
+        solid_joinstyle="round",
+        zorder=2,
+    )
+    # Start/finish: a fixed-size bar across the track at the first point.
+    # A 2-point asterisk marker is a line; rotation 0 is vertical, so rotating
+    # by the track heading makes it perpendicular to the track.
+    t = xy[min(3, len(xy) - 1)] - xy[0]
+    heading = float(np.degrees(np.arctan2(t[1], t[0])))
+    size = width * 2.6
+    for colour, mew in ((INK, width * 0.65), (SURFACE, width * 0.2)):
+        ax.plot(
+            [xy[0, 0]],
+            [xy[0, 1]],
+            linestyle="",
+            marker=(2, 2, heading),
+            markersize=size,
+            markeredgecolor=colour,
+            markeredgewidth=mew,
+            zorder=5,
+        )
+    if arrow and len(xy) > 80:
+        a, b = xy[len(xy) // 40], xy[len(xy) // 40 + len(xy) // 60]
+        ax.annotate(
+            "",
+            xy=b,
+            xytext=a,
+            zorder=6,
+            arrowprops={
+                "arrowstyle": "-|>",
+                "color": SURFACE,
+                "lw": 1.6,
+                "mutation_scale": 12,
+            },
+        )
+
+
+def _draw_circuit(circuit, xy, title, subtitle, note: str | None) -> bytes:
+    fig, (ax,) = _figure(height=7.5, width=9)
+    _map_axes(fig, ax)
+    _draw_outline(ax, xy)
+    extent = float(np.ptp(xy, axis=0).max())
+    ax.margins(0.1)
+    ax.autoscale_view()
+
+    # Scale bar (bottom-left) and north arrow (top-right).
+    (x0, x1), (y0, y1) = ax.get_xlim(), ax.get_ylim()
+    bar = _nice_scale(extent)
+    bx, by = x0 + (x1 - x0) * 0.03, y0 + (y1 - y0) * 0.045
+    ax.plot([bx, bx + bar], [by, by], color=INK_2, linewidth=2, zorder=3)
+    ax.text(
+        bx + bar / 2,
+        by - (y1 - y0) * 0.012,
+        f"{bar} m" if bar < 1000 else f"{bar // 1000} km",
+        ha="center",
+        va="top",
+        fontsize=8,
+        color=INK_2,
+    )
+    nx, ny = x1 - (x1 - x0) * 0.04, y1 - (y1 - y0) * 0.1
+    ax.annotate(
+        "N",
+        xy=(nx, ny + (y1 - y0) * 0.06),
+        xytext=(nx, ny),
+        ha="center",
+        va="top",
+        fontsize=9,
+        color=INK_2,
+        arrowprops={"arrowstyle": "-|>", "color": INK_2, "lw": 1.2},
+    )
+
+    _legend(
+        ax,
+        [
+            Line2D([], [], color=ASPHALT, linewidth=6, label="Track"),
+            Line2D([], [], color=INK, linewidth=3, label="Start / finish"),
+        ],
+    )
+    if note:
+        fig.text(0.01, 0.015, note, fontsize=8, color=MUTED, va="bottom")
+    _title(fig, title, subtitle)
+    return _png(fig)
+
+
+def _circuit_meta(c) -> dict:
+    return {
+        "circuitId": c.id,
+        "name": c.name,
+        "location": c.location,
+        "lengthM": c.length_m,
+        "outlineLengthM": round(c.measured_length_m),
+        "direction": c.direction,
+        "firstGrandPrix": c.first_gp,
+        "opened": c.opened,
+        "altitudeM": c.altitude_m,
+        "source": "bacinger/f1-circuits (MIT), stored outline",
+    }
+
+
+def _circuit_subtitle(c) -> str:
+    parts = [c.location, f"{c.length_m / 1000:.3f} km", c.direction]
+    if c.first_gp:
+        parts.append(f"first GP {c.first_gp}")
+    return " · ".join(p for p in parts if p)
+
+
+async def _render_stored_circuit(c, note: str | None) -> bytes:
+    xy = smooth_loop(c.xy)
+    return await _render(_draw_circuit, c, xy, c.name, _circuit_subtitle(c), note)
+
+
+def _draw_season(cells, title, subtitle) -> bytes:
+    cols = 6
+    rows = int(np.ceil(len(cells) / cols))
+    fig = Figure(figsize=(12, 2.15 * rows + 1.1), dpi=120, facecolor=SURFACE)
+    axes = fig.subplots(rows, cols, squeeze=False)
+    for ax in axes.flat:
+        ax.set_facecolor(SURFACE)
+        ax.axis("off")
+    for ax, (label, sub, xy) in zip(axes.flat, cells):
+        ax.set_aspect("equal")
+        _draw_outline(ax, xy, width=2.6, arrow=False)
+        ax.margins(0.12)
+        ax.set_title(label, fontsize=9, color=INK, loc="left", pad=2, weight="bold")
+        ax.text(
+            0, -0.04, sub, transform=ax.transAxes, fontsize=7.5, color=INK_2, va="top"
+        )
+    h = fig.get_figheight()
+    fig.text(0.01, 1 - 0.15 / h, title, fontsize=14, color=INK, weight="bold", va="top")
+    fig.text(0.01, 1 - 0.45 / h, subtitle, fontsize=10, color=INK_2, va="top")
+    fig.subplots_adjust(
+        left=0.02,
+        right=0.98,
+        top=1 - 1.0 / h,
+        bottom=0.25 / h,
+        hspace=0.45,
+        wspace=0.12,
+    )
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=SURFACE)
+    return buf.getvalue()
+
+
+@tool_handler
+async def plot_circuit(
+    circuit: str | None = None,
+    year: int | None = None,
+    save_path: bool | str = False,
+) -> ToolResult:
+    """
+    Draw a real F1 circuit from stored outline data — works offline, no
+    session download needed. With only `year`, draws every circuit on that
+    season's calendar as a sheet of small maps.
+
+    Data source: bundled circuit outlines (bacinger/f1-circuits, MIT),
+    covering every F1 circuit used since 2018 plus classic venues.
+
+    Use for "show me the Monaco track", "what does Suzuka look like",
+    "draw the 2026 calendar circuits", or when FastF1 telemetry is not
+    available. For speed/gear-coloured maps, corners and DRS zones from a
+    real lap, use plot_track_map.
+
+    Args:
+        circuit: Grand Prix name, circuit name, location or nickname
+                 ("Monaco", "British", "COTA", "Spa", "Yas Marina"), or a
+                 round number together with `year`.
+        year: Season. Disambiguates names whose venue changed (the Spanish
+              GP moves to Madrid in 2026) and is needed for round numbers.
+              On its own (no `circuit`), draws that season's calendar
+              (2020-2026 stored).
+        save_path: If True, also write the PNG to the export directory
+                   (default `./fastf1-exports/`); a string is a directory or
+                   a full `.png` path.
+
+    Returns:
+        An image plus a caption. Structured content has the circuit name,
+        location, official length, direction of racing, first Grand Prix
+        and altitude (or the season's circuit list).
+
+    Note:
+        Maps are drawn north-up from geographic coordinates (official F1
+        maps are often rotated). The outline starts on the start/finish
+        line and the arrow shows the direction of racing.
+    """
+    logger.info(f"plot_circuit: {circuit=}, {year=}")
+    if circuit is None and year is None:
+        raise FastF1MCPError(
+            ErrorCode.INVALID_PARAMETER,
+            "Give a circuit (e.g. 'Monaco') or a year for the season sheet.",
+        )
+
+    if circuit is None:
+        from ..utils.circuits import _calendar, calendar_years
+
+        ids = _calendar(year)
+        if not ids:
+            raise FastF1MCPError(
+                ErrorCode.INVALID_PARAMETER,
+                f"No stored calendar for {year}.",
+                suggestions=[
+                    f"Stored seasons: {', '.join(map(str, calendar_years()))}"
+                ],
+            )
+        circuits = load_circuits()
+        cells = [
+            (
+                f"R{i} · {circuits[cid].location}",
+                f"{circuits[cid].length_m / 1000:.3f} km · {circuits[cid].direction}",
+                smooth_loop(circuits[cid].xy, n=500),
+            )
+            for i, cid in enumerate(ids, start=1)
+        ]
+        png = await _render(
+            _draw_season,
+            cells,
+            f"{year} Formula 1 circuits",
+            "In calendar order · north up · bar marks the start/finish line",
+        )
+        meta = {
+            "year": year,
+            "rounds": [
+                {"round": i, **_circuit_meta(circuits[cid])}
+                for i, cid in enumerate(ids, start=1)
+            ],
+        }
+        return _result(
+            png,
+            f"{year} calendar: {len(ids)} circuits",
+            meta,
+            save_path,
+            "plot_circuit",
+            [year, "calendar"],
+        )
+
+    c = resolve_circuit(circuit, year)
+    png = await _render_stored_circuit(c, None)
+    caption = f"{c.name} — {_circuit_subtitle(c)} (stored outline, north up)"
+    return _result(png, caption, _circuit_meta(c), save_path, "plot_circuit", [c.id])

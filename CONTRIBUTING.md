@@ -73,6 +73,7 @@ src/fastf1_mcp/
 ├── config.py           # Pydantic settings (FASTF1_MCP_* env vars)
 ├── logging_config.py   # stderr logging setup
 ├── prompts.py          # MCP prompt templates
+├── data/circuits/      # Bundled circuit outlines + calendars (MIT, see README there)
 ├── resources.py        # MCP resource handlers
 ├── tools/
 │   ├── lookups.py       # Ergast API tools
@@ -87,6 +88,7 @@ src/fastf1_mcp/
 │   ├── charts.py        # PNG chart tools incl. track map (matplotlib Figure API)
 │   └── utility.py       # Cache + list tools
 └── utils/
+    ├── circuits.py       # Stored circuit outlines: lookup, projection, smoothing
     ├── converters.py     # DataFrame → JSON helpers (to_jsonable, summaries)
     ├── ergast.py         # run_ergast() / first_frame() for Ergast calls
     ├── errors.py         # Structured error types

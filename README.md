@@ -8,7 +8,8 @@ An [MCP](https://modelcontextprotocol.io) server that exposes Formula 1 data to 
 
 ## Features
 
-- **35 tools** covering standings, race results, lap times, telemetry, pit stops, qualifying, race control, weather, race progression, tyre degradation, corner analysis, DRS zones and live championship projections
+- **36 tools** covering standings, race results, lap times, telemetry, pit stops, qualifying, race control, weather, race progression, tyre degradation, corner analysis, DRS zones and live championship projections
+- **Real circuit maps offline** — every F1 circuit since 2018 drawn from bundled outline data, no download needed
 - **Charts** — track maps, speed traces, race position charts, tyre strategies and lap-time plots returned as PNG images Claude can show inline
 - **Live replay bridge** — follow a race playing in [f1-race-replay](https://github.com/IAmTomShaw/f1-race-replay) and get race-engineer commentary
 - **4 MCP resources** for schedule, driver, constructor, and circuit reference data
@@ -190,7 +191,8 @@ config, so files land in the user's project directory by default.
 | `plot_position_chart` | Race history chart — every driver's position by lap, up to 8 highlighted. |
 | `plot_tyre_strategy` | Stint bars coloured (and lettered) by compound, in finishing order. |
 | `plot_lap_times` | Lap time vs lap for up to 3 drivers, marker shape = compound. |
-| `plot_track_map` | Circuit map of a lap coloured by speed or gear, with numbered corners, DRS zones and direction of travel — or, with `at_lap`, every car's position on track at the start of that lap. |
+| `plot_track_map` | Circuit map of a lap coloured by speed or gear, with numbered corners, DRS zones and direction of travel — or, with `at_lap`, every car's position on track at the start of that lap. Falls back to the stored outline when FastF1 telemetry can't be downloaded. |
+| `plot_circuit` | Real circuit outline from bundled data — works offline. By name ("Monaco", "COTA", "Spa"), Grand Prix, or year + round; with only a year, a sheet of that season's circuits. Shows official length, direction of racing and start/finish. |
 
 All chart tools accept `save_path` to also write the PNG into the export directory. `plot_speed_trace` also shades where DRS was open.
 
@@ -267,6 +269,9 @@ Show me how the 2024 Brazil race unfolded
 Where was everyone when the safety car came out on lap 34?
 → plot_track_map(2024, "Hungary", "R", at_lap=34)
 
+Draw the Suzuka circuit / show me all the 2026 tracks
+→ plot_circuit("Suzuka") / plot_circuit(year=2026)
+
 Who was leading the championship on the road at half distance in Abu Dhabi?
 → get_championship_projection(2024, "Abu Dhabi", after_lap=29)
 
@@ -304,6 +309,7 @@ uv run ruff check src/
 | [Ergast API](http://ergast.com/mrd/) (via FastF1) | 1950 – present | Standings, schedules, historical results, circuit info |
 | [FastF1 Live Timing](https://docs.fastf1.dev) | 2018 – present | Lap times, telemetry, qualifying, pit stops, tire data, race control, weather |
 | [MultiViewer](https://multiviewer.app/) (via FastF1) | 2018 – present | Circuit corner positions (corner analysis, speed-trace markers) |
+| [bacinger/f1-circuits](https://github.com/bacinger/f1-circuits) (bundled, MIT) | all F1 circuits used 2018 – 2026 + classics | Offline circuit outlines and 2020 – 2026 calendars (`plot_circuit`, track-map fallback) |
 
 > **Note:** FastF1 session data is only available from 2018 onwards. Use `get_race_results_historical` for earlier seasons.
 
