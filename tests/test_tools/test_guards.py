@@ -20,7 +20,9 @@ from fastf1_mcp.tools.telemetry import (
     get_sector_times,
     get_speed_trap_data,
 )
+from fastf1_mcp.tools.championship import get_championship_projection
 from fastf1_mcp.tools.corners import get_corner_analysis
+from fastf1_mcp.tools.track import get_drs_zones
 from fastf1_mcp.tools.race_analysis import get_position_changes, get_tyre_degradation
 from fastf1_mcp.tools.race_events import get_race_control_messages, get_weather
 from fastf1_mcp.utils.errors import ErrorCode
@@ -66,6 +68,11 @@ YEAR_GUARDED_CALLS = [
     ),
     pytest.param(
         lambda: get_tyre_degradation(2017, "Monaco"), id="get_tyre_degradation"
+    ),
+    pytest.param(lambda: get_drs_zones(2017, "Monaco"), id="get_drs_zones"),
+    pytest.param(
+        lambda: get_championship_projection(2017, "Monaco"),
+        id="get_championship_projection",
     ),
 ]
 

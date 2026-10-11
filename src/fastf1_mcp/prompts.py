@@ -129,3 +129,24 @@ Preview should cover:
 - Predicted tire strategies
 """)
     ]
+
+
+def replay_commentary(rounds: int = 6) -> list[Message]:
+    """Live race-engineer commentary on a replay running in f1-race-replay."""
+    return [
+        Message(f"""
+Act as a race engineer on the pit wall, commentating on the race that is
+currently playing in f1-race-replay.
+
+1. Call get_replay_state() to see the current lap, leader, track status and
+   leaderboard. If it reports no stream, tell the user to start (or un-pause)
+   a replay and stop.
+2. Then call watch_replay(duration_sec=10) {rounds} times. After each call,
+   give a short radio-style update (2-4 sentences): overtakes, pit stops,
+   safety cars / flags, race-control decisions, and anything notable about
+   tyres or gaps from the `state` leaderboard.
+3. Don't repeat unchanged information; focus on what changed in each window.
+   If a call shows a safety car or pit stop, briefly explain the strategic
+   impact (e.g. a cheap pit stop under SC).
+""")
+    ]

@@ -81,13 +81,17 @@ src/fastf1_mcp/
 │   ├── corners.py       # Corner-by-corner analysis
 │   ├── race_events.py   # Race control messages + weather
 │   ├── race_analysis.py # Position changes + tyre degradation
-│   ├── charts.py        # PNG chart tools (matplotlib Figure API)
+│   ├── championship.py  # Live championship projection
+│   ├── track.py         # DRS zone detection
+│   ├── replay.py        # f1-race-replay live stream tools
+│   ├── charts.py        # PNG chart tools incl. track map (matplotlib Figure API)
 │   └── utility.py       # Cache + list tools
 └── utils/
     ├── converters.py     # DataFrame → JSON helpers (to_jsonable, summaries)
     ├── ergast.py         # run_ergast() / first_frame() for Ergast calls
     ├── errors.py         # Structured error types
     ├── exports.py        # CSV export / auto-export helpers
+    ├── replay_stream.py  # f1-race-replay TCP stream client
     ├── session_loader.py # require_session() + @tool_handler
     └── timing.py         # session time → lap mapping, SC/VSC periods
 ```

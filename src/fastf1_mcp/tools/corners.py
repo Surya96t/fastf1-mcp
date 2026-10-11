@@ -19,9 +19,9 @@ _MAX_HALF_WINDOW_M = 150.0
 _APPROACH_M = 350.0
 
 
-async def load_corners(session_obj) -> pd.DataFrame:
+async def load_circuit_info(session_obj):
     """
-    Fetch the circuit's corner markers (Number, Letter, Distance, X, Y, Angle).
+    Fetch FastF1's CircuitInfo (corners, marshal sectors, map rotation).
 
     `Session.get_circuit_info()` makes a network request and computes marker
     distances from the fastest lap's telemetry, so it runs in an executor.
@@ -35,6 +35,16 @@ async def load_corners(session_obj) -> pd.DataFrame:
             f"Circuit corner data unavailable: {e}",
             suggestions=["Corner markers come from the MultiViewer API — retry later"],
         ) from e
+    if info is None:
+        raise FastF1MCPError(
+            ErrorCode.DATA_UNAVAILABLE, "Circuit corner data unavailable."
+        )
+    return info
+
+
+async def load_corners(session_obj) -> pd.DataFrame:
+    """Corner markers (Number, Letter, Distance, X, Y, Angle), sorted by distance."""
+    info = await load_circuit_info(session_obj)
     corners = getattr(info, "corners", None)
     if corners is None or corners.empty or "Distance" not in corners.columns:
         raise FastF1MCPError(

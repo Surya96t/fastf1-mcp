@@ -35,8 +35,9 @@ from ..utils.errors import ErrorCode, FastF1MCPError
 from ..utils.exports import _display_path, resolve_export_path
 from ..utils.session_loader import require_session, tool_handler
 from ..utils.timing import to_seconds
-from .corners import corner_label, load_corners
+from .corners import corner_label, load_circuit_info, load_corners
 from .telemetry import _cumulative_time_at_distances, _get_driver_lap
+from .track import _open_runs, session_drs_zones
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,22 @@ MUTED = "#898781"
 GRID = "#e1e0d9"
 AXIS = "#c3c2b7"
 BACKGROUND_LINE = "#d6d5ce"
+DRS_BAND = "#ecebe6"
+
+# Sequential blue ramp (light -> dark = slow -> fast). Starts at step 250 so
+# the slowest colour still clears 2:1 against the chart surface.
+SPEED_RAMP = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281", "#0d366b"]
+# Ordinal ramp for gears 1-8, same hue.
+GEAR_RAMP = [
+    "#86b6ef",
+    "#6da7ec",
+    "#5598e7",
+    "#3987e5",
+    "#2a78d6",
+    "#1c5cab",
+    "#184f95",
+    "#0d366b",
+]
 
 # Fixed categorical order. Line charts may use all eight; scatter-type charts
 # cap at three (the first three slots are the ones that validate all-pairs).
@@ -85,9 +102,9 @@ COMPOUND_MARKERS = {
 
 
 def _figure(
-    nrows: int = 1, height: float = 5.5, height_ratios=None
+    nrows: int = 1, height: float = 5.5, height_ratios=None, width: float = 11
 ) -> tuple[Figure, list]:
-    fig = Figure(figsize=(11, height), dpi=120, facecolor=SURFACE)
+    fig = Figure(figsize=(width, height), dpi=120, facecolor=SURFACE)
     axes = fig.subplots(
         nrows,
         1,
@@ -212,7 +229,7 @@ def _resolve_codes(lookup: dict, drivers) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _draw_speed_trace(traces, delta, corners, title, subtitle) -> bytes:
+def _draw_speed_trace(traces, delta, corners, drs_runs, title, subtitle) -> bytes:
     two = len(traces) == 2
     fig, axes = _figure(
         nrows=2 if two else 1,
@@ -225,6 +242,11 @@ def _draw_speed_trace(traces, delta, corners, title, subtitle) -> bytes:
         ax.plot(d, v, color=SERIES[i], linewidth=1.6, solid_capstyle="round")
         handles.append(Line2D([], [], color=SERIES[i], linewidth=2, label=label))
     ax.set_ylabel("Speed (km/h)")
+    for start, end in drs_runs:
+        for a in axes:
+            a.axvspan(start, end, color=DRS_BAND, zorder=0, linewidth=0)
+    if drs_runs:
+        handles.append(Patch(color=DRS_BAND, label="DRS open"))
     _legend(ax, handles)
 
     if corners:
@@ -273,6 +295,7 @@ async def plot_speed_trace(
     driver2: str | None = None,
     lap: int | str = "fastest",
     show_corners: bool = True,
+    show_drs: bool = True,
     save_path: bool | str = False,
 ) -> ToolResult:
     """
@@ -291,6 +314,8 @@ async def plot_speed_trace(
         lap: Lap number or "fastest" (default) — applied to each driver
         show_corners: Mark numbered corners (default True; skipped silently
                       if circuit data is unavailable)
+        show_drs: Shade where `driver`'s DRS flap was open on this lap
+                  (default True)
         save_path: If True, also write the PNG to the export directory
                    (default `./fastf1-exports/`); a string is a directory or
                    a full `.png` path.
@@ -366,19 +391,26 @@ async def plot_speed_trace(
         except FastF1MCPError as e:
             logger.info(f"Skipping corner markers: {e.message}")
 
+    drs_runs = _open_runs(tels[0]) if show_drs else []
+
     title = f"{year} {_event_name(session_obj, event)} · {session}"
     png = await _render(
         _draw_speed_trace,
         traces,
         delta,
         corners,
+        drs_runs,
         title,
         " vs ".join(m["driver"] for m in meta_laps) + " — speed by lap distance",
     )
     return _result(
         png,
         caption,
-        {"laps": meta_laps, "corners": len(corners)},
+        {
+            "laps": meta_laps,
+            "corners": len(corners),
+            "drsOpen": [{"startM": round(a), "endM": round(b)} for a, b in drs_runs],
+        },
         save_path,
         "plot_speed_trace",
         [year, event, session, driver, driver2],
@@ -811,4 +843,538 @@ async def plot_lap_times(
         save_path,
         "plot_lap_times",
         [year, event, session, *codes],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Track map
+# ---------------------------------------------------------------------------
+
+
+def _rotate(x: np.ndarray, y: np.ndarray, angle_deg: float) -> np.ndarray:
+    """Rotate track coordinates so the map matches the official orientation."""
+    a = np.deg2rad(angle_deg)
+    rot = np.array([[np.cos(a), np.sin(a)], [-np.sin(a), np.cos(a)]])
+    return np.column_stack([x, y]) @ rot
+
+
+def _lap_position_data(lap_row) -> pd.DataFrame:
+    """X/Y position samples (with SessionTime) for one lap."""
+    return lap_row.get_pos_data()
+
+
+def _corner_marks(corners: pd.DataFrame | None, rotation: float) -> list[tuple]:
+    """(label, label_xy, track_xy) for each corner, offset off the racing line."""
+    if corners is None or corners.empty or not {"X", "Y"}.issubset(corners.columns):
+        return []
+    marks = []
+    offset = 500.0  # FastF1 map units (1/10 m)
+    for _, c in corners.iterrows():
+        a = np.deg2rad(float(c.get("Angle", 0.0) or 0.0))
+        lx = float(c["X"]) + offset * np.cos(a)
+        ly = float(c["Y"]) + offset * np.sin(a)
+        (tx, ty), (px, py) = _rotate(
+            np.array([lx, float(c["X"])]), np.array([ly, float(c["Y"])]), rotation
+        )
+        marks.append((corner_label(c), (tx, px), (ty, py)))
+    return marks
+
+
+def _draw_corner_marks(ax, marks) -> None:
+    for label, (lx, px), (ly, py) in marks:
+        ax.plot([px, lx], [py, ly], color=AXIS, linewidth=0.8, zorder=4)
+        ax.scatter([lx], [ly], s=170, color=SURFACE, edgecolors=AXIS, zorder=5)
+        ax.text(
+            lx,
+            ly,
+            label[1:],
+            fontsize=6.5,
+            color=INK_2,
+            ha="center",
+            va="center",
+            zorder=6,
+        )
+
+
+def _map_axes(fig: Figure, ax) -> None:
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+
+def _draw_track_trace(xy, values, mode, drs_mask, marks, title, subtitle) -> bytes:
+    from matplotlib.collections import LineCollection
+    from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap
+
+    fig, (ax,) = _figure(height=7.5, width=9)
+    _map_axes(fig, ax)
+    pts = xy.reshape(-1, 1, 2)
+    segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    handles = []
+
+    if drs_mask is not None and drs_mask.any():
+        band = LineCollection(
+            segs[drs_mask[:-1]], colors=SERIES[1], linewidths=11, alpha=0.4, zorder=1
+        )
+        ax.add_collection(band)
+        handles.append(
+            Line2D([], [], color=SERIES[1], alpha=0.4, linewidth=8, label="DRS zone")
+        )
+
+    if mode == "none" or values is None:
+        ax.plot(xy[:, 0], xy[:, 1], color=INK_2, linewidth=3, zorder=2)
+    else:
+        if mode == "gear":
+            cmap = ListedColormap(GEAR_RAMP)
+            norm = BoundaryNorm(np.arange(0.5, 9.5, 1.0), cmap.N)
+        else:
+            cmap = LinearSegmentedColormap.from_list("speed", SPEED_RAMP)
+            norm = None
+        lc = LineCollection(
+            segs, cmap=cmap, norm=norm, linewidths=4, zorder=2, capstyle="round"
+        )
+        lc.set_array(values[:-1])
+        if norm is None:
+            lc.set_clim(float(np.nanmin(values)), float(np.nanmax(values)))
+        ax.add_collection(lc)
+        cbar = fig.colorbar(
+            lc,
+            ax=ax,
+            fraction=0.03,
+            pad=0.02,
+            ticks=range(1, 9) if mode == "gear" else None,
+        )
+        cbar.set_label("Gear" if mode == "gear" else "Speed (km/h)", color=INK_2)
+        cbar.outline.set_visible(False)
+        cbar.ax.tick_params(colors=INK_2, labelsize=8, length=0)
+
+    # Start/finish and direction of travel.
+    k = min(25, len(xy) - 1)
+    ax.annotate(
+        "",
+        xy=xy[k],
+        xytext=xy[0],
+        arrowprops={"arrowstyle": "-|>", "color": INK, "lw": 1.5},
+        zorder=6,
+    )
+    ax.scatter([xy[0, 0]], [xy[0, 1]], s=40, color=INK, zorder=6, marker="s")
+    handles.append(
+        Line2D(
+            [],
+            [],
+            color=INK,
+            marker="s",
+            linestyle="",
+            label="Start/finish → direction",
+        )
+    )
+
+    _draw_corner_marks(ax, marks)
+    ax.autoscale_view()
+    ax.margins(0.08)
+    _legend(ax, handles)
+    _title(fig, title, subtitle)
+    return _png(fig)
+
+
+def _label_offsets(cars: list[dict], centre: np.ndarray, extent: float) -> dict:
+    """
+    Place highlighted-car labels radially outside the track, stacking them
+    further out when two cars are close, so labels never overlap.
+    """
+    placed: list[np.ndarray] = []
+    offsets = {}
+    for car in cars:
+        p = np.array([car["x"], car["y"]])
+        v = p - centre
+        n = np.linalg.norm(v)
+        unit = v / n if n > 0 else np.array([1.0, 0.0])
+        step = 0
+        while (
+            any(
+                np.linalg.norm((p + unit * extent * 0.07 * (1 + step)) - q)
+                < extent * 0.06
+                for q in placed
+            )
+            and step < 6
+        ):
+            step += 1
+        placed.append(p + unit * extent * 0.07 * (1 + step))
+        offsets[car["driver"]] = unit * (16 + 14 * step)
+    return offsets
+
+
+def _draw_track_positions(outline, cars, highlight, marks, title, subtitle) -> bytes:
+    fig, (ax,) = _figure(height=7.5, width=9)
+    _map_axes(fig, ax)
+    ax.plot(
+        outline[:, 0],
+        outline[:, 1],
+        color=BACKGROUND_LINE,
+        linewidth=9,
+        solid_capstyle="round",
+        zorder=1,
+    )
+    _draw_corner_marks(ax, marks)
+    colour = {code: SERIES[i] for i, code in enumerate(highlight)}
+
+    for car in sorted(cars, key=lambda c: c["driver"] in colour):
+        hl = car["driver"] in colour
+        ax.scatter(
+            [car["x"]],
+            [car["y"]],
+            s=110 if hl else 55,
+            color=colour.get(car["driver"], MUTED),
+            edgecolors=SURFACE,
+            linewidths=2,
+            zorder=4 if hl else 3,
+        )
+
+    centre = outline.mean(axis=0)
+    extent = float(np.ptp(outline, axis=0).max()) or 1.0
+    hl_cars = sorted(
+        (c for c in cars if c["driver"] in colour), key=lambda c: c["position"]
+    )
+    for car in hl_cars:
+        dx, dy = _label_offsets(hl_cars, centre, extent)[car["driver"]]
+        ax.annotate(
+            f"P{car['position']} {car['driver']}",
+            (car["x"], car["y"]),
+            xytext=(dx, dy),
+            textcoords="offset points",
+            fontsize=8.5,
+            color=INK,
+            weight="bold",
+            ha="left" if dx >= 0 else "right",
+            va="bottom" if dy >= 0 else "top",
+            arrowprops={"arrowstyle": "-", "color": AXIS, "lw": 0.8},
+            zorder=5,
+        )
+
+    # Running order in a right-hand panel — readable even when cars bunch.
+    h = fig.get_figheight()
+    top = 1 - 1.05 / h
+    fig.text(0.86, top, "Order", fontsize=9, color=INK, weight="bold", va="top")
+    order = "\n".join(
+        f"{c['position']:>2} {c['driver']}" + (" pit" if c.get("inPit") else "")
+        for c in sorted(cars, key=lambda c: c["position"])
+    )
+    fig.text(
+        0.86,
+        top - 0.3 / h,
+        order,
+        fontsize=8,
+        family="monospace",
+        color=INK_2,
+        va="top",
+        linespacing=1.5,
+    )
+    if highlight:
+        _legend(
+            ax,
+            [
+                Line2D(
+                    [],
+                    [],
+                    color=colour[c],
+                    marker="o",
+                    linestyle="",
+                    markersize=8,
+                    label=c,
+                )
+                for c in highlight
+            ],
+        )
+    _title(fig, title, subtitle)
+    fig.subplots_adjust(left=0.03, right=0.84, top=top, bottom=0.3 / h)
+    ax.margins(0.12)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=SURFACE)
+    return buf.getvalue()
+
+
+async def _reference_lap(session_obj, driver: str | None, lap):
+    """Telemetry of the requested lap (default: the session's fastest lap)."""
+    if driver is None:
+        fastest = session_obj.laps.pick_fastest()
+        if fastest is None:
+            raise FastF1MCPError(ErrorCode.DATA_UNAVAILABLE, "No timed laps found.")
+        driver = fastest["Driver"]
+    lap_row = _get_driver_lap(session_obj, driver, lap)
+    if lap_row is None:
+        raise FastF1MCPError(
+            ErrorCode.DRIVER_NOT_FOUND, f"No lap {lap!r} found for driver '{driver}'"
+        )
+    try:
+        tel = lap_row.get_telemetry()
+        if "Distance" not in tel.columns:
+            tel = tel.add_distance()
+    except Exception as e:
+        raise FastF1MCPError(
+            ErrorCode.DATA_UNAVAILABLE, f"Telemetry unavailable for {driver}: {e}"
+        ) from e
+    if not {"X", "Y"}.issubset(tel.columns):
+        raise FastF1MCPError(
+            ErrorCode.DATA_UNAVAILABLE, "Lap telemetry has no X/Y position data."
+        )
+    tel = tel.dropna(subset=["X", "Y", "Distance"]).sort_values("Distance")
+    return driver, lap_row, tel
+
+
+def _cars_at(session_obj, t: float, lookup: dict) -> tuple[list[dict], list[str]]:
+    """Every car's X/Y and running order at session time `t` (seconds)."""
+    laps = session_obj.laps
+    cars, not_running = [], []
+    for drv, dl in laps.dropna(subset=["LapStartTime", "Time"]).groupby("Driver"):
+        code = lookup.get(drv, {}).get("driverCode") or drv
+        start = dl["LapStartTime"].map(to_seconds)
+        end = dl["Time"].map(to_seconds)
+        current = dl[(start <= t) & (end > t)]
+        if current.empty:
+            not_running.append(code)
+            continue
+        row = current.iloc[0]
+        try:
+            pos = _lap_position_data(row)
+        except Exception as e:
+            logger.debug(f"No position data for {code}: {e}")
+            not_running.append(code)
+            continue
+        pos = pos.dropna(subset=["X", "Y", "SessionTime"])
+        st = pos["SessionTime"].map(to_seconds).to_numpy(dtype=float)
+        if len(st) == 0:
+            not_running.append(code)
+            continue
+        order = np.argsort(st)
+        st = st[order]
+        x = float(np.interp(t, st, pos["X"].to_numpy(dtype=float)[order]))
+        y = float(np.interp(t, st, pos["Y"].to_numpy(dtype=float)[order]))
+        lap_start, lap_end = to_seconds(row["LapStartTime"]), to_seconds(row["Time"])
+        frac = (t - lap_start) / (lap_end - lap_start) if lap_end > lap_start else 0.0
+        in_pit = bool(
+            (
+                "PitOutTime" in row
+                and pd.notna(row["PitOutTime"])
+                and to_seconds(row["PitOutTime"]) >= t
+            )
+            or (
+                "PitInTime" in row
+                and pd.notna(row["PitInTime"])
+                and to_seconds(row["PitInTime"]) <= t
+            )
+        )
+        cars.append(
+            {
+                "driver": code,
+                "lap": int(row["LapNumber"]),
+                "lapFraction": round(float(frac), 3),
+                "x": x,
+                "y": y,
+                "inPit": in_pit,
+            }
+        )
+    cars.sort(key=lambda c: -(c["lap"] + c["lapFraction"]))
+    for i, c in enumerate(cars, start=1):
+        c["position"] = i
+    return cars, sorted(not_running)
+
+
+@tool_handler
+async def plot_track_map(
+    year: int,
+    event: str | int,
+    session: str = "Q",
+    driver: str | None = None,
+    lap: int | str = "fastest",
+    color_by: str = "speed",
+    at_lap: int | None = None,
+    highlight: list[str] | None = None,
+    show_corners: bool = True,
+    show_drs: bool = True,
+    save_path: bool | str = False,
+) -> ToolResult:
+    """
+    Draw the circuit map. Two modes:
+
+    1. Lap trace (default): the racing line of one lap coloured by speed or
+       gear, with numbered corners, DRS zones and the direction of travel.
+    2. Car positions (`at_lap=N`): where every car was on track at the
+       moment the leader started lap N, with the running order listed.
+
+    Returns a PNG image.
+
+    Data source: FastF1 Live Timing position data + MultiViewer corners
+    Coverage: 2018-present
+
+    Use for "show me the track", "where is the car fastest", "which gear
+    through each corner", or "where was everyone when the safety car came
+    out on lap 34".
+
+    Args:
+        year: Season year (2018+)
+        event: Race name or round number
+        session: Session type (default "Q"; use "R"/"S" for at_lap)
+        driver: Driver whose lap is traced (default: the session's fastest lap)
+        lap: Lap number or "fastest" (default)
+        color_by: "speed" (default), "gear" or "none"
+        at_lap: Draw car positions at the start of this lap instead of a trace
+        highlight: Up to 8 driver codes coloured in positions mode
+                   (default: the top three at that moment)
+        show_corners: Number the corners (default True)
+        show_drs: Highlight DRS zones on the trace (default True)
+        save_path: If True, also write the PNG to the export directory
+                   (default `./fastf1-exports/`); a string is a directory or
+                   a full `.png` path.
+
+    Returns:
+        An image plus a caption. Structured content has the lap used,
+        DRS zones and, in positions mode, the running order.
+    """
+    color_by = (color_by or "speed").lower()
+    if color_by not in {"speed", "gear", "none"}:
+        raise FastF1MCPError(
+            ErrorCode.INVALID_PARAMETER,
+            f"color_by must be 'speed', 'gear' or 'none' (got {color_by!r}).",
+        )
+    logger.info(
+        f"plot_track_map: {year=}, {event=}, {session=}, {driver=}, {lap=}, "
+        f"{color_by=}, {at_lap=}"
+    )
+    session_obj = await require_session(year, event, session, with_telemetry=True)
+    lookup = build_driver_lookup(session_obj)
+    ref_driver, lap_row, tel = await _reference_lap(session_obj, driver, lap)
+
+    rotation, corners = 0.0, None
+    try:
+        info = await load_circuit_info(session_obj)
+        rotation = float(getattr(info, "rotation", 0.0) or 0.0)
+        corners = getattr(info, "corners", None)
+    except FastF1MCPError as e:
+        logger.info(f"Track map without circuit info: {e.message}")
+    marks = _corner_marks(corners, rotation) if show_corners else []
+    xy = _rotate(
+        tel["X"].to_numpy(dtype=float), tel["Y"].to_numpy(dtype=float), rotation
+    )
+    title = f"{year} {_event_name(session_obj, event)} · {session}"
+    ref_code = lookup.get(ref_driver, {}).get("driverCode") or ref_driver
+
+    if at_lap is None:
+        values = None
+        if color_by == "speed" and "Speed" in tel.columns:
+            values = tel["Speed"].to_numpy(dtype=float)
+        elif color_by == "gear" and "nGear" in tel.columns:
+            values = tel["nGear"].to_numpy(dtype=float)
+
+        zones = []
+        drs_mask = None
+        if show_drs:
+            zones, _, _ = await session_drs_zones(session_obj)
+            d = tel["Distance"].to_numpy(dtype=float)
+            drs_mask = np.zeros(len(d), dtype=bool)
+            lap_len = float(d.max()) if len(d) else 0.0
+            for z in zones:
+                if z.get("crossesLine"):
+                    drs_mask |= (d >= z["startM"]) | (d <= z["endM"])
+                else:
+                    drs_mask |= (d >= z["startM"]) & (d <= z["endM"])
+            if lap_len == 0:
+                drs_mask = None
+
+        lap_no = lap_row.get("LapNumber")
+        lap_time = lap_row.get("LapTime")
+        lt = _fmt_laptime(to_seconds(lap_time)) if pd.notna(lap_time) else "n/a"
+        subtitle = (
+            f"{ref_code} lap {int(lap_no) if pd.notna(lap_no) else '?'} ({lt}) — "
+            + {
+                "speed": "coloured by speed",
+                "gear": "coloured by gear",
+                "none": "racing line",
+            }[color_by]
+        )
+        png = await _render(
+            _draw_track_trace, xy, values, color_by, drs_mask, marks, title, subtitle
+        )
+        meta = {
+            "mode": "trace",
+            "driver": ref_code,
+            "lapNumber": int(lap_no) if pd.notna(lap_no) else None,
+            "colorBy": color_by,
+            "corners": len(marks),
+            "drsZones": zones,
+        }
+        caption = f"Track map — {subtitle}; {len(zones)} DRS zones marked"
+        if values is not None and color_by == "speed":
+            caption += f"; speed {np.nanmin(values):.0f}–{np.nanmax(values):.0f} km/h"
+        return _result(
+            png,
+            caption,
+            meta,
+            save_path,
+            "plot_track_map",
+            [year, event, session, ref_code, color_by],
+        )
+
+    # ---------------- positions mode ----------------
+    from ..utils.timing import LapClock
+
+    clock = LapClock.from_laps(session_obj.laps)
+    if clock is None or at_lap not in set(clock.lap_numbers.tolist()):
+        raise FastF1MCPError(
+            ErrorCode.INVALID_PARAMETER,
+            f"Lap {at_lap} not found in {year} {event} {session}.",
+        )
+    idx = int(np.flatnonzero(clock.lap_numbers == at_lap)[0])
+    t = float(clock.start_secs[idx]) + 0.5  # just after the leader crosses the line
+    cars, not_running = _cars_at(session_obj, t, lookup)
+    if not cars:
+        raise FastF1MCPError(
+            ErrorCode.DATA_UNAVAILABLE, f"No car positions available at lap {at_lap}."
+        )
+    for c in cars:
+        ((c["x"], c["y"]),) = _rotate(np.array([c["x"]]), np.array([c["y"]]), rotation)
+    codes = (
+        _resolve_codes(lookup, highlight)
+        if highlight
+        else [c["driver"] for c in cars[:3]]
+    )
+    if len(codes) > MAX_LINE_SERIES:
+        raise FastF1MCPError(
+            ErrorCode.INVALID_PARAMETER,
+            f"At most {MAX_LINE_SERIES} drivers can be highlighted.",
+        )
+    missing = [c for c in codes if c not in {car["driver"] for car in cars}]
+    if missing:
+        raise FastF1MCPError(
+            ErrorCode.DRIVER_NOT_FOUND,
+            f"{missing} not on track at lap {at_lap}.",
+        )
+    png = await _render(
+        _draw_track_positions,
+        xy,
+        cars,
+        codes,
+        marks,
+        title,
+        f"Car positions as the leader starts lap {at_lap}",
+    )
+    order = [
+        {k: c[k] for k in ("position", "driver", "lap", "lapFraction", "inPit")}
+        for c in cars
+    ]
+    caption = (
+        f"Track positions at the start of lap {at_lap}: "
+        + ", ".join(f"P{c['position']} {c['driver']}" for c in cars[:5])
+        + (f"; not running: {', '.join(not_running)}" if not_running else "")
+    )
+    return _result(
+        png,
+        caption,
+        {
+            "mode": "positions",
+            "atLap": at_lap,
+            "order": order,
+            "notRunning": not_running,
+        },
+        save_path,
+        "plot_track_map",
+        [year, event, session, f"lap-{at_lap}"],
     )

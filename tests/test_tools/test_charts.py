@@ -85,6 +85,12 @@ async def test_speed_trace_caption_reports_gap_sign():
     assert "VER vs LEC" in result.content[1].text
     assert "gap at the line -" in result.content[1].text
     assert result.structured_content["corners"] == len(rf.CORNERS)
+    drs = result.structured_content["drsOpen"]
+    assert [(z["startM"], z["endM"]) for z in drs] == [
+        pytest.approx((0, 200), abs=5),
+        pytest.approx((700, 1300), abs=5),
+        pytest.approx((3000, 3300), abs=5),
+    ]
 
 
 @pytest.mark.asyncio

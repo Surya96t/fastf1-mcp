@@ -224,6 +224,22 @@ def build_weather() -> pd.DataFrame:
 # apex speed at each, so corner analysis has a known answer.
 CORNERS = [(1, 400.0, 90.0), (2, 1500.0, 150.0), (3, 2600.0, 70.0)]
 LAP_LENGTH = 3300.0
+# DRS zones (start, end) in metres; the second straddles the start/finish line.
+DRS_ZONES = [(700.0, 1300.0), (3000.0, 200.0)]
+ROTATION = 90.0
+# The synthetic track is a circle; FastF1 map units are 1/10 m.
+_RADIUS = LAP_LENGTH * 10 / (2 * np.pi)
+
+
+def track_xy(dist: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    theta = 2 * np.pi * np.asarray(dist, dtype=float) / LAP_LENGTH
+    return _RADIUS * np.cos(theta), _RADIUS * np.sin(theta)
+
+
+def drs_open(dist: np.ndarray) -> np.ndarray:
+    d = np.asarray(dist, dtype=float)
+    (a1, b1), (a2, b2) = DRS_ZONES
+    return ((d >= a1) & (d <= b1)) | (d >= a2) | (d <= b2)
 
 
 def make_lap_telemetry(apex_offset_kph: float = 0.0, n: int = 1500) -> MockTelemetry:
@@ -237,6 +253,7 @@ def make_lap_telemetry(apex_offset_kph: float = 0.0, n: int = 1500) -> MockTelem
         brake |= (d > dist - 120) & (d < dist - 10)
     # Time channel consistent with speed.
     dt = np.diff(d, prepend=0) / np.maximum(v / 3.6, 1.0)
+    x, y = track_xy(d)
     return MockTelemetry(
         {
             "Distance": d,
@@ -244,17 +261,20 @@ def make_lap_telemetry(apex_offset_kph: float = 0.0, n: int = 1500) -> MockTelem
             "Throttle": np.where(brake, 0.0, 100.0),
             "Brake": brake,
             "nGear": np.where(v < 120, 3, 8),
-            "DRS": np.zeros(n, dtype=int),
+            "DRS": np.where(drs_open(d), 12, 8),
             "Time": pd.to_timedelta(np.cumsum(dt), unit="s"),
+            "X": x,
+            "Y": y,
         }
     )
 
 
 def make_corners() -> pd.DataFrame:
+    x, y = track_xy([c[1] for c in CORNERS])
     return pd.DataFrame(
         {
-            "X": [0.0] * len(CORNERS),
-            "Y": [0.0] * len(CORNERS),
+            "X": x,
+            "Y": y,
             "Number": [c[0] for c in CORNERS],
             "Letter": [""] * len(CORNERS),
             "Angle": [0.0] * len(CORNERS),
@@ -272,8 +292,24 @@ def make_race_session() -> MagicMock:
     session.track_status = build_track_status(laps)
     session.race_control_messages = build_race_control()
     session.weather_data = build_weather()
-    session.event = {"EventName": "Test Grand Prix"}
+    session.event = {"EventName": "Test Grand Prix", "RoundNumber": 5}
     info = MagicMock()
     info.corners = make_corners()
+    info.rotation = ROTATION
     session.get_circuit_info = MagicMock(return_value=info)
     return session
+
+
+def lap_position_data(lap_row) -> pd.DataFrame:
+    """Position samples for one fixture lap: constant speed around the circle."""
+    start = lap_row["LapStartTime"].total_seconds()
+    end = lap_row["Time"].total_seconds()
+    frac = np.linspace(0.0, 1.0, 60)
+    x, y = track_xy(frac * LAP_LENGTH)
+    return pd.DataFrame(
+        {
+            "SessionTime": pd.to_timedelta(start + frac * (end - start), unit="s"),
+            "X": x,
+            "Y": y,
+        }
+    )

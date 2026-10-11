@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Track map** — `plot_track_map` draws the circuit from FastF1 position data: a lap's racing line coloured by speed or gear with numbered corners, DRS zones and direction of travel, or (`at_lap=N`) every car's position on track as the leader starts lap N with the running order. Uses the official map rotation from the circuit data.
+- **Live championship projection** — `get_championship_projection` gives drivers' and constructors' standings as if the race ended at any lap: baseline from the previous round's official standings (plus same-weekend sprint points), race points from the running order (sprint table for sprints; +1 fastest-lap point for 2019–2024 Grands Prix), official points on the final lap, and optionally the projected championship leader after every lap.
+- **DRS zones** — `get_drs_zones` infers zones from where the DRS flap actually opened on the fastest laps of up to 8 drivers (clustered, with zones straddling the start/finish line merged) and names the surrounding corners. `plot_speed_trace` shades DRS-open sections and the track map highlights the zones.
+- **f1-race-replay bridge** — `get_replay_state` and `watch_replay` read the telemetry stream of a race playing in [f1-race-replay](https://github.com/IAmTomShaw/f1-race-replay): live leaderboard, track status, safety car, weather, race-control messages, and overtakes / pit stops / status changes over a watch window. The client drains the stream continuously (the replay's server would otherwise block its render thread) and handles multi-megabyte messages. New `replay_commentary` prompt; `FASTF1_MCP_REPLAY_STREAM_HOST` / `_PORT` settings.
+
 - **Race control & weather** — `get_race_control_messages` returns the race-control feed plus a session-wide summary: SC / VSC / red-flag periods with start/end laps (from the track-status feed), penalties, investigations (every car involved), and track-limits lap deletions per driver; filter by category, driver or lap range. `get_weather` returns air/track temperature, humidity and wind stats, rain periods mapped to laps, and an interval-sampled series.
 - **Race progression** — `get_position_changes`: lap-by-lap positions and race-history gaps to the leader, grid→finish movement, lap-1 gains, laps led, lead changes, and biggest gainers/losers. Long-format CSV export.
 - **Tyre degradation** — `get_tyre_degradation`: fuel-corrected degradation rate (s/lap) per stint from clean green-flag laps (outliers >107% dropped), per-compound medians, fresh-tyre pace and compound crossover estimates. Works for races and practice long runs.
@@ -39,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- 119 tests passing (up from 68). New synthetic race fixture with known ground truth (degradation rates, SC window, pit laps, apex speeds) so the analysis tools are checked for *recovering* the right answers; chart tools are exercised end-to-end through an MCP client (PNG content, captions, `save_path`, input validation); error dicts are validated against each tool's advertised output schema.
+- 146 tests passing (up from 68). New synthetic race fixture with known ground truth (degradation rates, SC window, pit laps, apex speeds) so the analysis tools are checked for *recovering* the right answers; chart tools are exercised end-to-end through an MCP client (PNG content, captions, `save_path`, input validation); error dicts are validated against each tool's advertised output schema. The replay bridge is tested against a local TCP server speaking the f1-race-replay protocol (including ~3 MB messages) and was also checked against f1-race-replay's own `TelemetryStreamServer`.
 
 ---
 
