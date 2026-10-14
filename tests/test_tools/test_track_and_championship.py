@@ -262,8 +262,10 @@ async def test_lead_change_detected_and_history():
         result = await get_championship_projection(2024, "Test", include_history=True)
     s = result["summary"]
     assert s["leaderBefore"] == "LEC"
-    if _finish_order(session)[0] == "VER":  # VER wins → 125 vs LEC ≤ 123
-        assert s["leader"] == "VER" and s["leadChanged"] is True
+    # The fixture is deterministic: VER wins (100 + 25 = 125), LEC is at most
+    # second (105 + 18 = 123), so the championship lead changes hands.
+    assert _finish_order(session)[0] == "VER"
+    assert s["leader"] == "VER" and s["leadChanged"] is True
     history = result["leadByLap"]
     assert [h["lap"] for h in history] == list(range(1, rf.TOTAL_LAPS + 1))
     assert history[-1]["leader"] == s["leader"]
@@ -323,6 +325,35 @@ async def test_sprint_session_uses_sprint_table():
         result = await get_championship_projection(2024, "Test", session="S")
     assert sorted(d["racePoints"] for d in result["drivers"]) == [6.0, 7.0, 8.0]
     api.get_sprint_results.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_championship_without_laps_is_a_structured_error():
+    # Regression (review): an empty laps frame made int(NaN) raise ValueError.
+    session = rf.make_race_session()
+    session.laps = session.laps.iloc[0:0]
+    with _session(session), _ergast():
+        result = await get_championship_projection(2024, "Test")
+    assert result["code"] == ErrorCode.DATA_UNAVAILABLE.value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool, args",
+    [
+        ("get_position_changes", {"drivers": "ham, ver", "include_laps": False}),
+        ("plot_position_chart", {"highlight": "VER,HAM"}),
+        ("plot_lap_times", {"drivers": "VER LEC"}),
+    ],
+)
+async def test_driver_lists_accept_a_string_through_mcp(tool, args):
+    # Regression (review): `list[str]` annotations made MCP clients reject
+    # the comma-separated strings the tools are written to accept.
+    with _session():
+        result = await _call(tool, **args)
+    assert not result.is_error
+    sc = result.structured_content
+    assert "code" not in sc, sc
 
 
 @pytest.mark.asyncio

@@ -41,7 +41,7 @@ async def get_position_changes(
     year: int,
     event: str | int,
     session: str = "R",
-    drivers: list[str] | None = None,
+    drivers: list[str] | str | None = None,
     include_laps: bool = True,
     export_path: bool | str = False,
 ) -> dict:

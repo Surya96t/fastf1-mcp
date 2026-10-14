@@ -127,17 +127,33 @@ def make_message(i: int, big: bool = False) -> dict:
 
 @asynccontextmanager
 async def replay_server(
-    n_messages: int = 60, interval: float = 0.02, big=False, silent=False
+    n_messages: int = 60,
+    interval: float = 0.02,
+    big=False,
+    silent=False,
+    lines=None,
+    then_pause=False,
 ):
+    """
+    Serve scripted messages. `lines` overrides the payloads (raw bytes, one
+    per message); `then_pause` keeps the connection open but silent after
+    the last message, like a replay that was paused mid-watch.
+    """
+
     async def handle(reader, writer):
         try:
             if silent:  # like a paused replay: connected, but sends nothing
                 await reader.read()  # returns once the client disconnects
                 return
-            for i in range(n_messages):
-                writer.write(json.dumps(make_message(i, big)).encode() + b"\n")
+            payloads = lines or (
+                json.dumps(make_message(i, big)).encode() for i in range(n_messages)
+            )
+            for payload in payloads:
+                writer.write(payload + b"\n")
                 await writer.drain()
                 await asyncio.sleep(interval)
+            if then_pause:
+                await reader.read()
         except (ConnectionError, asyncio.CancelledError):
             pass
         finally:
@@ -189,13 +205,17 @@ async def test_get_replay_state_handles_megabyte_messages():
 
 @pytest.mark.asyncio
 async def test_watch_replay_reports_changes():
-    async with replay_server(n_messages=60, interval=0.02):
+    async with replay_server(n_messages=150, interval=0.02):
         result = await watch_replay(duration_sec=2)
 
-    assert result["positionChanges"] == [
+    swaps = sorted((c["driver"], c["from"], c["to"]) for c in result["positionChanges"])
+    assert swaps == [("LEC", 2, 3), ("NOR", 3, 2)]
+    assert all(c["replayTimeSec"] is not None for c in result["positionChanges"])
+    assert result["netPositionChanges"] == [
         {"driver": "NOR", "from": 3, "to": 2},
         {"driver": "LEC", "from": 2, "to": 3},
     ]
+    assert result["stalled"] is False
     assert result["pitEntries"] == ["HAM"]
     assert result["pitExits"] == []
     assert [(c["from"], c["to"]) for c in result["trackStatusChanges"]] == [
@@ -225,3 +245,57 @@ async def test_paused_replay_times_out_with_hint():
         with pytest.raises(Exception) as exc:
             await read_snapshot(timeout=0.3)
     assert "un-pause" in exc.value.suggestions[0]
+
+
+def _swap_message(i: int) -> bytes:
+    """NOR passes LEC at i=10 and LEC re-passes at i=30."""
+    msg = make_message(0)
+    msg["frame"]["t"] = 1000.0 + i
+    swapped = 10 <= i < 30
+    msg["frame"]["drivers"]["LEC"]["position"] = 3 if swapped else 2
+    msg["frame"]["drivers"]["NOR"]["position"] = 2 if swapped else 3
+    return json.dumps(msg).encode()
+
+
+@pytest.mark.asyncio
+async def test_watch_replay_reports_reversed_overtakes():
+    # Regression (review): comparing only the first and last samples hid an
+    # overtake that was reversed within the window.
+    lines = [_swap_message(i) for i in range(45)]
+    async with replay_server(lines=lines, interval=0.05, then_pause=True):
+        result = await watch_replay(duration_sec=3)
+
+    moves = [(c["driver"], c["from"], c["to"]) for c in result["positionChanges"]]
+    assert sorted(moves) == sorted(
+        [("LEC", 2, 3), ("NOR", 3, 2), ("LEC", 3, 2), ("NOR", 2, 3)]
+    )
+    assert result["netPositionChanges"] == []
+
+
+@pytest.mark.asyncio
+async def test_watch_window_ends_early_when_stream_goes_quiet():
+    # Regression (review): after the first sample, a paused replay made the
+    # read wait for the whole remaining window.
+    from fastf1_mcp.utils.replay_stream import read_window
+
+    lines = [json.dumps(make_message(i)).encode() for i in range(5)]
+    async with replay_server(lines=lines, interval=0.02, then_pause=True):
+        start = asyncio.get_running_loop().time()
+        window = await read_window(duration=10, timeout=0.5)
+        elapsed = asyncio.get_running_loop().time() - start
+
+    assert window.stalled is True
+    assert elapsed < 3
+    assert window.first["frame"]["t"] == 1000.0
+    assert window.last["frame"]["t"] == 1008.0
+    assert window.samples >= 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [b"null", b"[1, 2]", b'"text"'])
+async def test_non_object_message_is_a_structured_error(payload):
+    # Regression (review): valid-but-non-object JSON crashed at .get().
+    async with replay_server(lines=[payload], then_pause=True):
+        result = await get_replay_state()
+    assert result["code"] == ErrorCode.DATA_UNAVAILABLE.value
+    assert "expected a JSON object" in result["message"]

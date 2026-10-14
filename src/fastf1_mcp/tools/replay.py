@@ -187,7 +187,9 @@ async def watch_replay(duration_sec: float = 10.0) -> dict:
             "from": {"replayTime": "00:41:12", "lap": 23},
             "to": {"replayTime": "00:42:52", "lap": 24},
             "replaySecondsCovered": 100.0,
-            "positionChanges": [{"driver": "NOR", "from": 4, "to": 3}, ...],
+            "positionChanges": [{"driver": "NOR", "from": 4, "to": 3,
+                                 "replayTimeSec": 2388.4}, ...],
+            "netPositionChanges": [{"driver": "NOR", "from": 4, "to": 3}],
             "pitEntries": ["HAM"], "pitExits": [],
             "trackStatusChanges": [{"from": "GREEN", "to": "SC",
                                     "replayTimeSec": 2401.2}],
@@ -199,8 +201,12 @@ async def watch_replay(duration_sec: float = 10.0) -> dict:
 
     Note:
         Messages are sampled four times a second, so a position swap that
-        reverts within ~0.25 s of replay time can be missed. `rewound` is
-        true if the user scrubbed backwards during the window.
+        reverts within ~0.25 s of real time can be missed.
+        `positionChanges` lists every change seen, in order (an overtake
+        that is later reversed appears twice); `netPositionChanges`
+        compares the start and end of the window. `rewound` is true if the
+        user scrubbed backwards; `stalled` is true if the stream went quiet
+        (replay paused or closed) before the window ended.
     """
     duration_sec = max(1.0, min(float(duration_sec), 60.0))
     logger.info(f"watch_replay: {duration_sec=}")
@@ -208,7 +214,14 @@ async def watch_replay(duration_sec: float = 10.0) -> dict:
     status_changes: list[dict] = []
     pit_entries: list[str] = []
     pit_exits: list[str] = []
-    state = {"prev_status": None, "prev_pit": {}, "prev_t": None, "rewound": False}
+    position_changes: list[dict] = []
+    state = {
+        "prev_status": None,
+        "prev_pit": {},
+        "prev_pos": {},
+        "prev_t": None,
+        "rewound": False,
+    }
 
     def _track(msg: dict) -> None:
         status = _status_label(msg.get("track_status"))
@@ -230,11 +243,17 @@ async def watch_replay(duration_sec: float = 10.0) -> dict:
             if prev is True and not in_pit and code not in pit_exits:
                 pit_exits.append(code)
             state["prev_pit"][code] = in_pit
+            pos = d.get("position")
+            old = state["prev_pos"].get(code)
+            if pos is not None and old is not None and pos != old:
+                position_changes.append(
+                    {"driver": code, "from": old, "to": pos, "replayTimeSec": t}
+                )
+            if pos is not None:
+                state["prev_pos"][code] = pos
 
-    samples = await read_window(duration_sec, on_sample=_track)
-    first, last = samples[0], samples[-1]
-    if len(samples) > 1:
-        _track(last)  # the tail sample may not have gone through on_sample
+    window = await read_window(duration_sec, on_sample=_track)
+    first, last = window.first, window.last
 
     def _positions(msg: dict) -> dict[str, int]:
         drivers = ((msg.get("frame") or {}).get("drivers")) or {}
@@ -245,7 +264,7 @@ async def watch_replay(duration_sec: float = 10.0) -> dict:
         }
 
     p0, p1 = _positions(first), _positions(last)
-    changes = sorted(
+    net_changes = sorted(
         (
             {"driver": c, "from": p0[c], "to": p1[c]}
             for c in p1
@@ -279,8 +298,12 @@ async def watch_replay(duration_sec: float = 10.0) -> dict:
         "from": _when(first),
         "to": _when(last),
         "replaySecondsCovered": round(float(t1) - float(t0), 1),
-        "samples": len(samples),
-        "positionChanges": changes,
+        "samples": window.samples,
+        # Every change seen between consecutive samples, in order — a swap
+        # that is later reversed still shows up here.
+        "positionChanges": position_changes,
+        # Start-of-window vs end-of-window positions.
+        "netPositionChanges": net_changes,
         "pitEntries": pit_entries,
         "pitExits": pit_exits,
         "trackStatusChanges": status_changes,
@@ -289,5 +312,8 @@ async def watch_replay(duration_sec: float = 10.0) -> dict:
         # The user rewound/scrubbed during the window, so changes may not
         # be chronological.
         "rewound": state["rewound"],
+        # The stream went quiet before the window ended (replay paused or
+        # closed); the report covers what arrived until then.
+        "stalled": window.stalled,
         "state": _summarise(last, 10),
     }

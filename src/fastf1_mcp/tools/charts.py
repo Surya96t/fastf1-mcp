@@ -477,7 +477,7 @@ async def plot_position_chart(
     year: int,
     event: str | int,
     session: str = "R",
-    highlight: list[str] | None = None,
+    highlight: list[str] | str | None = None,
     save_path: bool | str = False,
 ) -> ToolResult:
     """
@@ -759,7 +759,7 @@ async def plot_lap_times(
     year: int,
     event: str | int,
     session: str = "R",
-    drivers: list[str] | None = None,
+    drivers: list[str] | str | None = None,
     save_path: bool | str = False,
 ) -> ToolResult:
     """
@@ -1218,7 +1218,7 @@ async def plot_track_map(
     lap: int | str = "fastest",
     color_by: str = "speed",
     at_lap: int | None = None,
-    highlight: list[str] | None = None,
+    highlight: list[str] | str | None = None,
     show_corners: bool = True,
     show_drs: bool = True,
     save_path: bool | str = False,

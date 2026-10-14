@@ -36,7 +36,14 @@ _ALIASES: dict[str, list[str]] = {
     "au-1953": ["australia", "australian", "albert park", "melbourne"],
     "bh-2002": ["bahrain", "sakhir", "bahrain international"],
     "cn-2004": ["china", "chinese", "shanghai"],
-    "es-1991": ["barcelona", "catalunya", "barcelona-catalunya", "montmelo"],
+    "es-1991": [
+        "barcelona",
+        "catalunya",
+        "barcelona-catalunya",
+        "montmelo",
+        "spanish",
+        "spain",
+    ],
     "es-2026": ["madrid", "madring"],
     "mc-1929": ["monaco", "monte carlo", "monte-carlo"],
     "ca-1978": ["canada", "canadian", "montreal", "gilles villeneuve"],
@@ -101,9 +108,16 @@ _ALIASES: dict[str, list[str]] = {
     "za-1961": ["south africa", "south african", "kyalami"],
     "us-1956": ["watkins glen"],
 }
-# Names whose circuit changed over time: (alias, first year, circuit id).
-_YEAR_ALIASES = [("spanish", 2026, "es-2026"), ("spain", 2026, "es-2026")]
-_YEAR_ALIASES_BEFORE = {"spanish": "es-1991", "spain": "es-1991"}
+# Grand Prix names held at a different circuit in some seasons:
+# (alias, first year, last year or None, circuit id). Outside the range the
+# name resolves through _ALIASES as usual.
+_YEAR_ALIASES = [
+    ("spanish", 2026, None, "es-2026"),
+    ("spain", 2026, None, "es-2026"),
+    # 2026 Bahrain GP was moved to Sepang (2-4 Oct) after the April race
+    # was cancelled; it returns to Sakhir in 2027.
+    ("bahrain", 2026, 2026, "my-1999"),
+]
 
 
 @dataclass(frozen=True)
@@ -252,11 +266,14 @@ def resolve_circuit(query: str | int | None, year: int | None = None) -> Circuit
             f"{text!r} doesn't name a circuit.",
             suggestions=["Use a Grand Prix name (e.g. 'Monaco') or nickname ('COTA')"],
         )
-    for alias, first_year, cid in _YEAR_ALIASES:
-        if q == alias:
-            if year is not None and year >= first_year:
-                return circuits[cid]
-            return circuits[_YEAR_ALIASES_BEFORE[alias]]
+    for alias, first_year, last_year, cid in _YEAR_ALIASES:
+        if (
+            q == alias
+            and year is not None
+            and year >= first_year
+            and (last_year is None or year <= last_year)
+        ):
+            return circuits[cid]
     index = _alias_index()
     if q in index:
         return circuits[index[q]]

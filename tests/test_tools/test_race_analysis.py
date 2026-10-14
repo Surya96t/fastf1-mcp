@@ -89,6 +89,15 @@ async def test_race_control_filters_keep_summary_session_wide():
 
 
 @pytest.mark.asyncio
+async def test_race_control_driver_filter_ignores_case_and_whitespace():
+    # Regression (review): " ham" matched nothing and returned no messages.
+    with _session():
+        result = await get_race_control_messages(2024, "Test", "R", driver=" ham ")
+    assert len(result["messages"]) == 2
+    assert all(m["driver"] == "HAM" for m in result["messages"])
+
+
+@pytest.mark.asyncio
 async def test_race_control_resolves_racing_number_to_code():
     with _session():
         result = await get_race_control_messages(2024, "Test", "R", driver="44")

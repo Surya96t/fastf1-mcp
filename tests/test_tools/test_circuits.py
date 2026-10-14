@@ -148,12 +148,50 @@ def test_smooth_loop_keeps_start_and_length():
         ("Zandvort", None, "nl-1948"),  # typo
         ("Spanish Grand Prix", 2025, "es-1991"),
         ("Spanish Grand Prix", 2026, "es-2026"),
+        ("Spanish Grand Prix", None, "es-1991"),
+        ("Bahrain Grand Prix", 2025, "bh-2002"),
+        ("Bahrain Grand Prix", 2026, "my-1999"),  # held at Sepang
+        ("Bahrain Grand Prix", 2027, "bh-2002"),
+        ("Sakhir", 2026, "bh-2002"),  # the venue itself is still Sakhir
         ("12", 2024, "gb-1948"),
         (1, 2026, "au-1953"),
     ],
 )
 def test_resolve_circuit(query, year, expected):
     assert resolve_circuit(query, year).id == expected
+
+
+# Official number of championship rounds per season.
+ROUNDS = {2020: 17, 2021: 22, 2022: 22, 2023: 22, 2024: 24, 2025: 24, 2026: 23}
+
+
+@pytest.mark.parametrize("year, rounds", sorted(ROUNDS.items()))
+def test_calendars_have_one_entry_per_round(year, rounds):
+    # Regression (review): upstream lists each venue once per season, which
+    # shifted every round after a repeat venue or cancelled race.
+    assert len(_calendar(year)) == rounds
+
+
+@pytest.mark.parametrize(
+    "year, rnd, expected",
+    [
+        (2020, 1, "at-1969"),  # Austrian GP
+        (2020, 2, "at-1969"),  # Styrian GP
+        (2020, 5, "gb-1948"),  # 70th Anniversary GP
+        (2020, 16, "bh-2002"),  # Sakhir GP
+        (2020, 17, "ae-2009"),
+        (2021, 8, "at-1969"),  # Styrian GP
+        (2021, 9, "at-1969"),  # Austrian GP
+        (2023, 6, "mc-1929"),  # Imola was cancelled
+        (2023, 22, "ae-2009"),
+        (2024, 12, "gb-1948"),
+        (2026, 4, "us-2022"),  # Bahrain and Saudi rounds cancelled
+        (2026, 16, "my-1999"),  # Bahrain GP at Sepang
+        (2026, 23, "ae-2009"),
+    ],
+)
+def test_round_numbers_resolve_to_the_right_circuit(year, rnd, expected):
+    assert resolve_circuit(str(rnd), year).id == expected
 
 
 @pytest.mark.parametrize(

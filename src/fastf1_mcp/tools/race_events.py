@@ -233,7 +233,8 @@ async def get_race_control_messages(
         cat = category.lower()
         filtered = [r for r in filtered if (r["category"] or "").lower() == cat]
     if driver:
-        want = lookup.get(driver, {}).get("driverCode") or driver.upper()
+        key = str(driver).strip().upper()
+        want = lookup.get(key, {}).get("driverCode") or key
         filtered = [r for r in filtered if want in r["drivers"]]
     if lap_start is not None:
         filtered = [

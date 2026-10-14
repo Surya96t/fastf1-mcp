@@ -163,7 +163,13 @@ async def get_championship_projection(
             ErrorCode.DATA_UNAVAILABLE, f"Could not determine the round number: {e}"
         ) from e
 
-    total_laps = int(laps["LapNumber"].max())
+    max_lap = laps["LapNumber"].max() if laps is not None and len(laps) else None
+    if max_lap is None or pd.isna(max_lap):
+        raise FastF1MCPError(
+            ErrorCode.DATA_UNAVAILABLE,
+            f"No lap data for {year} {event} {session}.",
+        )
+    total_laps = int(max_lap)
     lap = total_laps if after_lap is None else max(1, min(int(after_lap), total_laps))
 
     # ------------------------------------------------------------------
