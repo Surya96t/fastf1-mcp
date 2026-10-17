@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Internal: new `utils/ergast.py` (`run_ergast`, `first_frame`) and `converters.to_jsonable` / `records_to_json` shared by tools and resources. `list_events`, `list_drivers`, `get_cache_status` and `clear_cache` now use `@tool_handler`; `list_drivers(event=…)` loads through `require_session` (gains the `session_not_held` error).
+- Docs: README quick start runs the published package with `uvx fastf1-mcp-server` (Claude Code and Claude Desktop) — no clone needed; PyPI page now links to the repository, issues and changelog.
 - Docs: `CONTRIBUTING.md` now states Python 3.12+, documents how tools are actually registered (`mcp.tool(fn)` in `server.py`) and lists all `utils/` modules; `examples/usage_examples.md` uses the `fastf1-mcp-server` command.
 
 ### Tests

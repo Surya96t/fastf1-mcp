@@ -1,6 +1,9 @@
 # fastf1-mcp
 
 [![CI](https://github.com/Surya96t/fastf1-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Surya96t/fastf1-mcp/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/fastf1-mcp-server)](https://pypi.org/project/fastf1-mcp-server/)
+
+<!-- mcp-name: io.github.Surya96t/fastf1-mcp -->
 
 An [MCP](https://modelcontextprotocol.io) server that exposes Formula 1 data to AI assistants via the [FastF1](https://docs.fastf1.dev) library. Ask Claude (or any MCP-compatible client) questions about race results, lap times, telemetry, standings, and more.
 
@@ -17,6 +20,33 @@ An [MCP](https://modelcontextprotocol.io) server that exposes Formula 1 data to 
 - Async-safe **LRU session cache** — repeat queries are instant after the first load
 - Distance-based telemetry sampling — large raw datasets compressed to ≤ 500 points
 - All errors returned as structured dicts — the server never crashes on bad input
+
+---
+
+## Quick start
+
+No clone needed — [uv](https://docs.astral.sh/uv/) runs the published package.
+
+**Claude Code**
+
+```bash
+claude mcp add fastf1 -- uvx fastf1-mcp-server
+```
+
+**Claude Desktop** — add to `claude_desktop_config.json` and restart:
+
+```json
+{
+  "mcpServers": {
+    "fastf1": {
+      "command": "uvx",
+      "args": ["fastf1-mcp-server"]
+    }
+  }
+}
+```
+
+Then ask: *"Plot the tyre strategies from the 2025 British Grand Prix"* or *"Who led every lap of the 2021 Saudi Arabian GP, and when were the red flags?"*
 
 ---
 
@@ -69,7 +99,7 @@ Both open the inspector at **http://localhost:6274**.
 
 ---
 
-## Claude Desktop configuration
+## Claude Desktop configuration (from a clone)
 
 Add the following to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
