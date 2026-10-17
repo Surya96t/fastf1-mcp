@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     # caller explicitly passes export_path).
     auto_export_rows: int = 50
 
+    # f1-race-replay telemetry stream (https://github.com/IAmTomShaw/f1-race-replay)
+    # read by get_replay_state / watch_replay. The stream is unauthenticated,
+    # so keep it on loopback unless you know what you are doing.
+    replay_stream_host: str = "127.0.0.1"
+    replay_stream_port: int = 9999
+
     # Logging
     log_level: str = "INFO"
 

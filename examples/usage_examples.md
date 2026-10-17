@@ -8,7 +8,7 @@ A reference of sample MCP tool calls and their expected responses. All examples 
 
 ```bash
 # Recommended — official npx inspector
-npx @modelcontextprotocol/inspector uv --directory . run fastf1-mcp
+npx @modelcontextprotocol/inspector uv --directory . run fastf1-mcp-server
 
 # Alternative — fastmcp wrapper
 uv run fastmcp dev inspector -m fastf1_mcp.server --with-editable .
@@ -17,7 +17,7 @@ uv run fastmcp dev inspector -m fastf1_mcp.server --with-editable .
 Opens at **http://localhost:6274**. To skip the auth token locally:
 
 ```bash
-DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector uv --directory . run fastf1-mcp
+DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector uv --directory . run fastf1-mcp-server
 ```
 
 ---
@@ -396,7 +396,7 @@ in it. You don't set it yourself; it's freshly generated every time.
 **To skip the token entirely** (simpler for local dev), prefix with:
 
 ```bash
-DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector uv --directory . run fastf1-mcp
+DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector uv --directory . run fastf1-mcp-server
 ```
 
 Then just open `http://localhost:6274`. Safe on a local machine — only matters if

@@ -1,7 +1,46 @@
+import datetime as dt
+import math
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+
+def to_jsonable(obj: Any) -> Any:
+    """
+    Recursively convert pandas/numpy values into plain JSON-safe Python.
+
+    MCP clients receive strict JSON, and FastMCP's serializer rejects or
+    mangles several pandas/numpy types: `np.int64` fails output validation,
+    `pd.NaT` raises, and `NaN` is emitted as the non-standard token `NaN`.
+    Missing values become None, numpy scalars become Python scalars,
+    timestamps become ISO strings and timedeltas use pandas' string form
+    (matching the lap-time format used elsewhere in this server).
+    """
+    if isinstance(obj, dict):
+        return {str(k): to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_jsonable(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return [to_jsonable(v) for v in obj.tolist()]
+    if obj is None or obj is pd.NA or obj is pd.NaT:
+        return None
+    if isinstance(obj, np.generic):
+        obj = obj.item()
+    if isinstance(obj, float):
+        return None if math.isnan(obj) or math.isinf(obj) else obj
+    if isinstance(obj, (pd.Timedelta, dt.timedelta)):
+        return str(pd.Timedelta(obj))
+    if isinstance(obj, (pd.Timestamp, dt.datetime, dt.date)):
+        return obj.isoformat()
+    return obj
+
+
+def records_to_json(df: Any) -> list[dict]:
+    """Convert a DataFrame to a JSON-safe list of row dicts."""
+    if df is None or not hasattr(df, "to_dict"):
+        return []
+    return to_jsonable(df.to_dict(orient="records"))
 
 
 def build_driver_lookup(session_obj: Any) -> dict[str, dict]:
@@ -320,7 +359,9 @@ def telemetry_summary(data: list[dict]) -> dict:
 
 def standings_to_json(standings: Any, standings_type: str) -> list[dict]:
     """Convert Ergast standings response to JSON."""
-    if hasattr(standings, "content") and len(standings.content) > 0:
+    if hasattr(standings, "content"):
+        if len(standings.content) == 0:
+            return []
         df = standings.content[0]
     else:
         df = standings
@@ -351,4 +392,6 @@ def standings_to_json(standings: Any, standings_type: str) -> list[dict]:
                 }
             )
 
-    return records
+    # Pre-2005 drivers have no three-letter code in Ergast (NaN) — normalise
+    # missing values so the response stays strict JSON.
+    return to_jsonable(records)

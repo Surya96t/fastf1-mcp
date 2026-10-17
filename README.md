@@ -1,6 +1,9 @@
 # fastf1-mcp
 
 [![CI](https://github.com/Surya96t/fastf1-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Surya96t/fastf1-mcp/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/fastf1-mcp-server)](https://pypi.org/project/fastf1-mcp-server/)
+
+<!-- mcp-name: io.github.Surya96t/fastf1-mcp -->
 
 An [MCP](https://modelcontextprotocol.io) server that exposes Formula 1 data to AI assistants via the [FastF1](https://docs.fastf1.dev) library. Ask Claude (or any MCP-compatible client) questions about race results, lap times, telemetry, standings, and more.
 
@@ -8,12 +11,42 @@ An [MCP](https://modelcontextprotocol.io) server that exposes Formula 1 data to 
 
 ## Features
 
-- **21 tools** covering standings, race results, lap times, telemetry, pit stops, and qualifying
+- **36 tools** covering standings, race results, lap times, telemetry, pit stops, qualifying, race control, weather, race progression, tyre degradation, corner analysis, DRS zones and live championship projections
+- **Real circuit maps offline** — every F1 circuit since 2018 drawn from bundled outline data, no download needed
+- **Charts** — track maps, speed traces, race position charts, tyre strategies and lap-time plots returned as PNG images Claude can show inline
+- **Live replay bridge** — follow a race playing in [f1-race-replay](https://github.com/IAmTomShaw/f1-race-replay) and get race-engineer commentary
 - **4 MCP resources** for schedule, driver, constructor, and circuit reference data
-- **5 guided prompts** for race recaps, qualifying analysis, strategy deep-dives, and weekend previews
+- **6 guided prompts** for race recaps, qualifying analysis, strategy deep-dives, weekend previews and live replay commentary
 - Async-safe **LRU session cache** — repeat queries are instant after the first load
 - Distance-based telemetry sampling — large raw datasets compressed to ≤ 500 points
 - All errors returned as structured dicts — the server never crashes on bad input
+
+---
+
+## Quick start
+
+No clone needed — [uv](https://docs.astral.sh/uv/) runs the published package.
+
+**Claude Code**
+
+```bash
+claude mcp add fastf1 -- uvx fastf1-mcp-server
+```
+
+**Claude Desktop** — add to `claude_desktop_config.json` and restart:
+
+```json
+{
+  "mcpServers": {
+    "fastf1": {
+      "command": "uvx",
+      "args": ["fastf1-mcp-server"]
+    }
+  }
+}
+```
+
+Then ask: *"Plot the tyre strategies from the 2025 British Grand Prix"* or *"Who led every lap of the 2021 Saudi Arabian GP, and when were the red flags?"*
 
 ---
 
@@ -66,7 +99,7 @@ Both open the inspector at **http://localhost:6274**.
 
 ---
 
-## Claude Desktop configuration
+## Claude Desktop configuration (from a clone)
 
 Add the following to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
@@ -102,6 +135,8 @@ All settings are read from environment variables with the `FASTF1_MCP_` prefix.
 | `FASTF1_MCP_MAX_TELEMETRY_SAMPLES` | `500` | Hard cap on telemetry sample points |
 | `FASTF1_MCP_EXPORT_DIR` | `./fastf1-exports` | Directory for CSV exports (relative to server cwd) |
 | `FASTF1_MCP_AUTO_EXPORT_ROWS` | `50` | Auto-export to CSV when the bulk array exceeds this many rows. Set to `0` to disable. |
+| `FASTF1_MCP_REPLAY_STREAM_HOST` | `127.0.0.1` | f1-race-replay telemetry stream host (keep on loopback — the stream is unauthenticated) |
+| `FASTF1_MCP_REPLAY_STREAM_PORT` | `9999` | f1-race-replay telemetry stream port |
 | `FASTF1_MCP_LOG_LEVEL` | `INFO` | Python logging level |
 
 ### Exporting full datasets for analysis
@@ -165,6 +200,42 @@ config, so files land in the user's project directory by default.
 | `compare_telemetry` | Compare telemetry between two drivers on the same session. |
 | `get_speed_trap_data` | Get speed trap and top-speed data for all drivers in a session. |
 | `get_sector_times` | Get best sector times and theoretical best lap for each driver. |
+| `get_corner_analysis` | Corner-by-corner apex/entry/exit speed, gear and brake point for one lap; with a second driver, where each gains or loses time. |
+| `get_drs_zones` | DRS zones (open/close distance, length, surrounding corners) inferred from where the flap actually opened (fastest laps, or in races the laps with the most DRS use). 2018–2025 (DRS was replaced by active aero in 2026). |
+
+### Race Analysis (FastF1 Live Timing — 2018-present)
+
+| Tool | Description |
+|---|---|
+| `get_race_control_messages` | Race control feed with a session summary: SC/VSC/red-flag periods (with laps), penalties, investigations, track-limits deletions. Filter by category, driver or lap range. |
+| `get_weather` | Air/track temperature, humidity, wind and rain over a session, with rain periods mapped to laps. |
+| `get_position_changes` | Lap-by-lap positions and gaps to the leader, grid→finish movement, laps led and lead changes. |
+| `get_tyre_degradation` | Fuel-corrected degradation rate per stint and per compound, plus compound crossover estimates. Works on races and practice long runs. |
+| `get_championship_projection` | Drivers' and constructors' standings as if the race ended at any lap — live points, lead changes during the race, and final official standings. Handles sprint weekends and the 2019–2024 fastest-lap point. |
+
+### Charts (PNG images)
+
+| Tool | Description |
+|---|---|
+| `plot_speed_trace` | Speed vs distance for one lap, or two drivers overlaid with a time-gap panel and corner markers. |
+| `plot_position_chart` | Race history chart — every driver's position by lap, up to 8 highlighted. |
+| `plot_tyre_strategy` | Stint bars coloured (and lettered) by compound, in finishing order. |
+| `plot_lap_times` | Lap time vs lap for up to 3 drivers, marker shape = compound. |
+| `plot_track_map` | Circuit map of a lap coloured by speed or gear, with numbered corners, DRS zones and direction of travel — or, with `at_lap`, every car's position on track at the start of that lap. Falls back to the stored outline when FastF1 telemetry can't be downloaded. |
+| `plot_circuit` | Real circuit outline from bundled data — works offline. By name ("Monaco", "COTA", "Spa"), Grand Prix, or year + round; with only a year, a sheet of that season's circuits. Shows official length, direction of racing and start/finish. |
+
+All chart tools accept `save_path` to also write the PNG into the export directory. `plot_speed_trace` also shades where DRS was open.
+
+### Live Replay (f1-race-replay)
+
+These read the telemetry stream that [f1-race-replay](https://github.com/IAmTomShaw/f1-race-replay) broadcasts on `localhost:9999` while a replay is playing. Start a replay there (`python main.py --viewer --year 2024 --round 12`), then ask Claude what's happening.
+
+| Tool | Description |
+|---|---|
+| `get_replay_state` | Snapshot: replay time, lap, leader, track status, safety car, weather, live leaderboard (tyre, speed, DRS, pit, gaps) and latest race-control messages. |
+| `watch_replay` | Watch for N seconds and report overtakes, pit entries/exits, SC/VSC/red-flag changes and new race-control messages. |
+
+The client drains the stream continuously and disconnects promptly — f1-race-replay's server writes on its render thread, so a client that stopped reading would freeze the replay.
 
 ### Utility
 
@@ -192,11 +263,12 @@ config, so files land in the user's project directory by default.
 
 | Prompt | Args | What it does |
 |---|---|---|
-| `race_recap` | `year, event` | Calls results + fastest laps + pit stops + stints, then narrates the race |
-| `qualifying_analysis` | `year, event` | Q breakdown + sector times + top laps analysis |
+| `race_recap` | `year, event` | Results + position changes + race control + fastest laps + stints, then narrates the race |
+| `qualifying_analysis` | `year, event` | Q breakdown + sector times + corner analysis of the pole lap |
 | `driver_comparison` | `year, driver1, driver2` | Season-level head-to-head: standings, races, qualifying |
-| `strategy_analysis` | `year, event` | Stints + pit timing + race pace — explains who won the strategy battle |
+| `strategy_analysis` | `year, event` | Stints + pit timing + tyre degradation + SC/VSC timing + race pace — explains who won the strategy battle |
 | `weekend_preview` | `year, event` | Circuit details + recent history + championship context |
+| `replay_commentary` | `rounds` | Race-engineer radio updates on a replay running in f1-race-replay |
 
 ---
 
@@ -211,6 +283,30 @@ Compare Verstappen and Leclerc's telemetry in 2024 Monaco qualifying
 
 Who had the fastest theoretical lap in 2024 Silverstone qualifying?
 → get_sector_times(2024, "Silverstone", "Q")
+
+Where did Norris lose pole to Verstappen in 2024 Spain qualifying?
+→ get_corner_analysis(2024, "Spain", "Q", "NOR", driver2="VER")
+
+Why did everyone pit on lap 34? Were there any penalties?
+→ get_race_control_messages(2024, "Hungary")
+
+How quickly did the mediums degrade compared to the hards?
+→ get_tyre_degradation(2024, "Bahrain")
+
+Show me how the 2024 Brazil race unfolded
+→ plot_position_chart(2024, "Brazil", highlight=["VER", "NOR", "RUS"])
+
+Where was everyone when the safety car came out on lap 34?
+→ plot_track_map(2024, "Hungary", "R", at_lap=34)
+
+Draw the Suzuka circuit / show me all the 2026 tracks
+→ plot_circuit("Suzuka") / plot_circuit(year=2026)
+
+Who was leading the championship on the road at half distance in Abu Dhabi?
+→ get_championship_projection(2024, "Abu Dhabi", after_lap=29)
+
+What's happening in the replay right now?
+→ get_replay_state() / watch_replay(duration_sec=10)
 
 Show me the 2024 constructor standings after round 10
 → get_constructor_standings(2024, after_round=10)
@@ -241,7 +337,9 @@ uv run ruff check src/
 | Source | Coverage | Used for |
 |---|---|---|
 | [Ergast API](http://ergast.com/mrd/) (via FastF1) | 1950 – present | Standings, schedules, historical results, circuit info |
-| [FastF1 Live Timing](https://docs.fastf1.dev) | 2018 – present | Lap times, telemetry, qualifying, pit stops, tire data |
+| [FastF1 Live Timing](https://docs.fastf1.dev) | 2018 – present | Lap times, telemetry, qualifying, pit stops, tire data, race control, weather |
+| [MultiViewer](https://multiviewer.app/) (via FastF1) | 2018 – present | Circuit corner positions (corner analysis, speed-trace markers) |
+| [bacinger/f1-circuits](https://github.com/bacinger/f1-circuits) (bundled, MIT) | all F1 circuits used 2018 – 2026 + classics | Offline circuit outlines and 2020 – 2026 calendars (`plot_circuit`, track-map fallback) |
 
 > **Note:** FastF1 session data is only available from 2018 onwards. Use `get_race_results_historical` for earlier seasons.
 

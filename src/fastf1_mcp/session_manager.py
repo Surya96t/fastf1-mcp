@@ -7,10 +7,49 @@ from functools import partial
 from typing import Any
 
 import fastf1
+import pandas as pd
+from fastf1.exceptions import DataNotLoadedError
 
 from .config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class SessionDataUnavailable(Exception):
+    """FastF1's load() finished but the requested data never arrived."""
+
+    def __init__(self, missing: list[str]):
+        self.missing = missing
+        super().__init__(f"FastF1 could not load: {', '.join(missing)}")
+
+
+# Session attributes that prove each load flag actually succeeded. FastF1's
+# Session.load() swallows download errors (it only logs them), so without
+# this check a failed load surfaces later as DataNotLoadedError — and the
+# broken session would sit in the cache.
+_LOAD_CHECKS = {"laps": "laps", "telemetry": "car_data"}
+
+
+def _verify_loaded(session: Any, flags: dict[str, bool]) -> None:
+    missing = []
+    if flags.get("results"):
+        # A failed download leaves `results` as an empty table rather than
+        # raising — every session that actually ran has a classification.
+        try:
+            results = session.results
+            if isinstance(results, pd.DataFrame) and results.empty:
+                missing.append("results")
+        except DataNotLoadedError:
+            missing.append("results")
+    for flag, attr in _LOAD_CHECKS.items():
+        if not flags.get(flag):
+            continue
+        try:
+            getattr(session, attr)
+        except DataNotLoadedError:
+            missing.append(flag)
+    if missing:
+        raise SessionDataUnavailable(missing)
 
 
 @dataclass
@@ -123,6 +162,7 @@ class SessionManager:
                     messages=missing.get("messages", False),
                 )
                 await loop.run_in_executor(None, load_func)
+                _verify_loaded(cached.session, missing)
 
                 for k in missing:
                     cached.loaded[k] = True
@@ -145,6 +185,8 @@ class SessionManager:
                 messages=load_messages,
             )
             await loop.run_in_executor(None, load_func)
+            # raises before caching
+            _verify_loaded(session, {**requested, "results": True})
 
             logger.info(f"Session loaded: {year} {event} {session_type}")
 

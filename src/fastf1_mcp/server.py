@@ -41,6 +41,26 @@ from .tools.telemetry import (
     get_speed_trap_data,
     get_sector_times,
 )
+from .tools.race_events import (
+    get_race_control_messages,
+    get_weather,
+)
+from .tools.race_analysis import (
+    get_position_changes,
+    get_tyre_degradation,
+)
+from .tools.corners import get_corner_analysis
+from .tools.charts import (
+    plot_speed_trace,
+    plot_position_chart,
+    plot_tyre_strategy,
+    plot_lap_times,
+    plot_track_map,
+    plot_circuit,
+)
+from .tools.track import get_drs_zones
+from .tools.championship import get_championship_projection
+from .tools.replay import get_replay_state, watch_replay
 from .resources import (
     schedule_resource,
     drivers_resource,
@@ -53,6 +73,7 @@ from .prompts import (
     driver_comparison,
     strategy_analysis,
     weekend_preview,
+    replay_commentary,
 )
 
 # Setup logging
@@ -125,6 +146,36 @@ mcp.tool(get_lap_telemetry)
 mcp.tool(compare_telemetry)
 mcp.tool(get_speed_trap_data)
 mcp.tool(get_sector_times)
+mcp.tool(get_corner_analysis)
+mcp.tool(get_drs_zones)
+
+# =============================================================================
+# Race Analysis Tools (FastF1 Live Timing, 2018+)
+# =============================================================================
+
+mcp.tool(get_race_control_messages)
+mcp.tool(get_weather)
+mcp.tool(get_position_changes)
+mcp.tool(get_tyre_degradation)
+mcp.tool(get_championship_projection)
+
+# =============================================================================
+# Chart Tools (PNG images rendered with matplotlib)
+# =============================================================================
+
+mcp.tool(plot_speed_trace)
+mcp.tool(plot_position_chart)
+mcp.tool(plot_tyre_strategy)
+mcp.tool(plot_lap_times)
+mcp.tool(plot_track_map)
+mcp.tool(plot_circuit)
+
+# =============================================================================
+# Live Replay Tools (f1-race-replay telemetry stream)
+# =============================================================================
+
+mcp.tool(get_replay_state)
+mcp.tool(watch_replay)
 
 # =============================================================================
 # Resources (Ergast API — reference data at well-known URIs)
@@ -145,6 +196,7 @@ mcp.prompt(qualifying_analysis)
 mcp.prompt(driver_comparison)
 mcp.prompt(strategy_analysis)
 mcp.prompt(weekend_preview)
+mcp.prompt(replay_commentary)
 
 # =============================================================================
 # Entry Point

@@ -21,7 +21,11 @@ def setup_logging() -> logging.Logger:
         root_logger.addHandler(console_handler)
 
     # Suppress noisy third-party loggers
-    logging.getLogger("fastf1").setLevel(logging.WARNING)
+    # FastF1 installs its own stderr handler; don't also print its records
+    # through ours (every warning appeared twice).
+    fastf1_logger = logging.getLogger("fastf1")
+    fastf1_logger.setLevel(logging.WARNING)
+    fastf1_logger.propagate = False
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     logger = logging.getLogger("fastf1_mcp")
