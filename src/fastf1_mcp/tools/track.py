@@ -21,8 +21,11 @@ _MIN_RUN_M = 50.0
 _CLUSTER_M = 250.0
 # A zone must be seen on at least this share of the reference laps.
 _MIN_SHARE = 0.3
-# Number of drivers' fastest laps used as references.
+# Number of reference laps used for detection.
 _REFERENCE_LAPS = 8
+# A race lap counts as a DRS lap with at least this many flap-open car-data
+# samples (~4 Hz, so about two seconds).
+_MIN_OPEN_SAMPLES = 8
 
 
 def _open_runs(tel: pd.DataFrame) -> list[tuple[float, float]]:
@@ -110,24 +113,100 @@ def detect_drs_zones(laps_tel: list[pd.DataFrame]) -> tuple[list[dict], float | 
     return zones, lap_length
 
 
-async def session_drs_zones(session_obj) -> tuple[list[dict], float | None, int]:
-    """Detect DRS zones from the fastest laps of the session's top drivers."""
-    laps = session_obj.laps
+def _fastest_laps(laps) -> list:
+    """Each driver's fastest lap, quickest first."""
     fastest = []
     for drv in laps["Driver"].dropna().unique():
         lap = laps.pick_drivers(drv).pick_fastest()
         if lap is not None and pd.notna(lap.get("LapTime")):
             fastest.append(lap)
     fastest.sort(key=lambda lap: lap["LapTime"])
+    return fastest[:_REFERENCE_LAPS]
 
+
+def drs_lap_index(session_obj, laps) -> list:
+    """
+    Index labels of laps on which the DRS flap was open, most DRS use first
+    and one lap per driver before any driver's second lap.
+
+    In a race DRS only opens within one second of the car ahead, so the
+    fastest laps (often set in clean air) can miss zones; laps with DRS
+    use are better references there.
+    """
+    car_data = getattr(session_obj, "car_data", None)
+    if not isinstance(car_data, dict) or not {
+        "DriverNumber",
+        "LapStartTime",
+        "Time",
+    }.issubset(getattr(laps, "columns", [])):
+        return []
+    scored = []  # (open samples, driver number, lap index)
+    for num, car in car_data.items():
+        if not isinstance(car, pd.DataFrame) or not {"DRS", "SessionTime"}.issubset(
+            car.columns
+        ):
+            continue
+        t_open = np.sort(
+            car.loc[car["DRS"] >= DRS_OPEN_MIN, "SessionTime"]
+            .dropna()
+            .to_numpy(dtype="timedelta64[ns]")
+        )
+        if not len(t_open):
+            continue
+        drv_laps = laps[laps["DriverNumber"].astype(str) == str(num)].dropna(
+            subset=["LapStartTime", "Time"]
+        )
+        starts = drv_laps["LapStartTime"].to_numpy(dtype="timedelta64[ns]")
+        ends = drv_laps["Time"].to_numpy(dtype="timedelta64[ns]")
+        counts = np.searchsorted(t_open, ends) - np.searchsorted(t_open, starts)
+        scored.extend(
+            (int(c), str(num), idx)
+            for idx, c in zip(drv_laps.index, counts)
+            if c >= _MIN_OPEN_SAMPLES
+        )
+    scored.sort(key=lambda s: -s[0])
+    seen: set[str] = set()
+    first, rest = [], []
+    for item in scored:
+        (rest if item[1] in seen else first).append(item)
+        seen.add(item[1])
+    return [idx for _, _, idx in (first + rest)[:_REFERENCE_LAPS]]
+
+
+def _zones_from(ref_laps: list) -> tuple[list[dict], float | None, int]:
     tels = []
-    for lap in fastest[:_REFERENCE_LAPS]:
+    for lap in ref_laps:
         try:
             tels.append(lap.get_telemetry())
         except Exception as e:  # one bad lap shouldn't sink the detection
             logger.debug(f"Skipping DRS reference lap: {e}")
     zones, lap_length = detect_drs_zones(tels)
     return zones, lap_length, len(tels)
+
+
+def _lap_at(laps, idx):
+    return laps.loc[idx]
+
+
+def _is_race(session_obj) -> bool:
+    return str(getattr(session_obj, "name", "")) in {"Race", "Sprint"}
+
+
+async def session_drs_zones(session_obj) -> tuple[list[dict], float | None, int]:
+    """
+    Detect DRS zones from reference laps: the top drivers' fastest laps,
+    or — in a race, or when those show no DRS use — laps on which the flap
+    was actually opened. Whichever finds more zones wins.
+    """
+    laps = session_obj.laps
+    zones, lap_length, n_ref = _zones_from(_fastest_laps(laps))
+    if _is_race(session_obj) or not zones:
+        idx = drs_lap_index(session_obj, laps)
+        if idx:
+            alt = _zones_from([_lap_at(laps, i) for i in idx])
+            if len(alt[0]) > len(zones):
+                return alt
+    return zones, lap_length, n_ref
 
 
 @tool_handler
@@ -143,11 +222,12 @@ async def get_drs_zones(
     Data source: FastF1 Live Timing telemetry (DRS flap channel)
     Coverage: 2018-2025 (DRS was replaced by active aero from 2026)
 
-    Zones are inferred from where the DRS flap was actually open on the
-    fastest laps of up to 8 drivers. Qualifying (default) is the best
-    source: drivers may use DRS in every zone on every flying lap. In a
-    race DRS only opens within one second of the car ahead, so some
-    zones can be missed.
+    Zones are inferred from where the DRS flap was actually open on up to
+    8 reference laps: the fastest laps of the top drivers, or in a race
+    the laps with the most DRS use (DRS only opens within one second of
+    the car ahead, so fastest race laps are often set without it).
+    Qualifying (default) is the best source: drivers may use DRS in every
+    zone on every flying lap.
 
     Args:
         year: Season year (2018+)

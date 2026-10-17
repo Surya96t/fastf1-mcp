@@ -118,8 +118,13 @@ async def get_position_changes(
     )
     total_laps = int(df["LapNumber"].max()) if len(df) else 0
 
-    # Leader per lap = first car to complete it.
+    # Leader per lap = first car to complete it. A car that stops on a lap
+    # (crash, red flag) gets a `Time` but no `Position` for it, so only
+    # classified laps count when FastF1 has positions.
     timed = df.dropna(subset=["_t"])
+    has_positions = bool(timed["Position"].notna().any())
+    if has_positions:
+        timed = timed[timed["Position"].notna()]
     leader_time = timed.groupby("LapNumber")["_t"].min()
     leader_by_lap = (
         timed.loc[timed.groupby("LapNumber")["_t"].idxmin()]
@@ -150,6 +155,8 @@ async def get_position_changes(
         gaps = []
         for n in range(1, last_lap + 1):
             t = t_by_lap.get(n)
+            if has_positions and positions[n - 1] is None:
+                t = None  # unclassified lap (stopped on track)
             lead = leader_time.get(n)
             gaps.append(
                 round(t - lead, 3)
@@ -343,7 +350,9 @@ async def get_tyre_degradation(
         `lapsUsed`. `freshTyrePaceSec` is the fitted, fuel-corrected lap
         time at tyre age 1, comparable across stints and drivers.
         `crossoverTyreAge` is the tyre age at which the faster-when-fresh
-        compound's higher degradation makes it slower than the other.
+        compound's higher degradation makes it slower than the other; it
+        is null (with a `note`) when that age is beyond the oldest tyre
+        run on the faster compound.
     """
     logger.info(
         f"get_tyre_degradation: {year=}, {event=}, {session=}, {driver=}, "
@@ -445,6 +454,10 @@ async def get_tyre_degradation(
             ),
         }
 
+    longest = {
+        comp: max(s["tyreAgeEnd"] for s in stints if s["compound"] == comp)
+        for comp in compounds
+    }
     crossovers = []
     for a, b in itertools.combinations(compounds, 2):
         ca, cb = compounds[a], compounds[b]
@@ -456,16 +469,22 @@ async def get_tyre_degradation(
         f, s = compounds[fast], compounds[slow]
         pace_gap = s["medianFreshTyrePaceSec"] - f["medianFreshTyrePaceSec"]
         deg_gap = f["medianDegSecPerLap"] - s["medianDegSecPerLap"]
-        crossovers.append(
-            {
-                "faster": fast,
-                "slower": slow,
-                "freshPaceGapSec": round(pace_gap, 3),
-                "crossoverTyreAge": int(np.ceil(pace_gap / deg_gap)) + 1
-                if deg_gap > 0
-                else None,
-            }
-        )
+        age = int(np.ceil(pace_gap / deg_gap)) + 1 if deg_gap > 0 else None
+        entry = {
+            "faster": fast,
+            "slower": slow,
+            "freshPaceGapSec": round(pace_gap, 3),
+            "crossoverTyreAge": age,
+        }
+        # Don't extrapolate past what was actually run on the faster tyre.
+        if age is not None and age > longest[fast]:
+            entry["crossoverTyreAge"] = None
+            entry["note"] = (
+                f"{fast} stays faster at every tyre age seen on it (up to "
+                f"{longest[fast]} laps); the fitted trend crosses only at "
+                f"tyre age {age}"
+            )
+        crossovers.append(entry)
 
     lowest = sorted(
         (s for s in stints if s["r2"] is not None and s["r2"] >= 0.3),

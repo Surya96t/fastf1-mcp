@@ -17,7 +17,12 @@ from fastf1_mcp.tools.championship import (
     _positions_at_lap,
     get_championship_projection,
 )
-from fastf1_mcp.tools.track import detect_drs_zones, get_drs_zones
+from fastf1_mcp.tools.track import (
+    detect_drs_zones,
+    drs_lap_index,
+    get_drs_zones,
+    session_drs_zones,
+)
 from fastf1_mcp.utils.errors import ErrorCode
 
 
@@ -97,6 +102,69 @@ async def test_get_drs_zones_with_corner_context():
     assert (zones[0]["afterCorner"], zones[0]["beforeCorner"]) == ("T1", "T2")
     assert (zones[1]["afterCorner"], zones[1]["beforeCorner"]) == ("T3", "T1")
     assert result["referenceLaps"] == 3
+
+
+def _car_data(laps, drs_laps: dict[str, set[int]]) -> dict[str, pd.DataFrame]:
+    """4 Hz car data per driver number; flap open (12) on the given laps."""
+    out = {}
+    for code, (num, *_rest) in rf.DRIVERS.items():
+        drv = laps[laps["Driver"] == code]
+        t = np.arange(
+            drv["LapStartTime"].min().total_seconds(),
+            drv["Time"].max().total_seconds(),
+            0.25,
+        )
+        drs = np.full(len(t), 8)
+        for _, lap in drv[drv["LapNumber"].isin(drs_laps.get(code, set()))].iterrows():
+            a = lap["LapStartTime"].total_seconds() + 10
+            drs[(t >= a) & (t < a + 6)] = 12  # one 6 s activation
+        out[num] = pd.DataFrame(
+            {"SessionTime": pd.to_timedelta(t, unit="s"), "DRS": drs}
+        )
+    return out
+
+
+def test_drs_lap_index_picks_drs_laps_one_driver_first():
+    session = rf.make_race_session()
+    laps = session.laps
+    session.car_data = _car_data(laps, {"VER": {5, 6, 7}, "HAM": {9}})
+    picked = laps.loc[drs_lap_index(session, laps), ["Driver", "LapNumber"]]
+    rows = list(picked.itertuples(index=False, name=None))
+    assert {d for d, _ in rows[:2]} == {"VER", "HAM"}  # one lap per driver first
+    assert sorted(rows) == [("HAM", 9), ("VER", 5), ("VER", 6), ("VER", 7)]
+
+
+def test_drs_lap_index_without_car_data():
+    session = rf.make_race_session()  # MagicMock car_data
+    assert drs_lap_index(session, session.laps) == []
+
+
+@pytest.mark.asyncio
+async def test_race_drs_zones_use_laps_with_drs():
+    # Regression (real 2022 Bahrain data): the fastest race laps were set in
+    # clean air without DRS, so no zones were found.
+    session = rf.make_race_session()
+    session.name = "Race"
+    session.car_data = _car_data(session.laps, {"VER": {5, 6}, "HAM": {9}})
+
+    def no_drs():
+        tel = rf.make_lap_telemetry()
+        tel["DRS"] = 8
+        return tel
+
+    with (
+        _session(session, tel_factory=no_drs),
+        patch(
+            "fastf1_mcp.tools.track._lap_at",
+            side_effect=lambda _laps, _i: _mock_lap(tel=rf.make_lap_telemetry()),
+        ),
+    ):
+        zones, _, n_ref = await session_drs_zones(session)
+    assert n_ref == 3
+    assert [(z["startM"], z["endM"]) for z in zones] == [
+        pytest.approx((700, 1300), abs=5),
+        pytest.approx((3000, 200), abs=5),
+    ]
 
 
 @pytest.mark.asyncio

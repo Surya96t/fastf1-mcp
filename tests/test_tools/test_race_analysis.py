@@ -177,6 +177,24 @@ async def test_position_changes_matches_fixture():
 
 
 @pytest.mark.asyncio
+async def test_car_stopping_on_track_never_leads_the_lap():
+    # Regression (real 2021 Saudi data): cars that crashed on a red-flagged
+    # lap get a `Time` (when the session stopped) but no `Position`; the
+    # earliest such time made them "lead" that lap.
+    session = rf.make_race_session()
+    laps = session.laps
+    crash = (laps["Driver"] == "LEC") & (laps["LapNumber"] == 20)
+    laps.loc[crash, "Time"] = laps.loc[laps["LapNumber"] == 19, "Time"].max()
+    laps.loc[crash, "Position"] = float("nan")
+    with _session(session):
+        result = await get_position_changes(2024, "Test")
+    assert "LEC" not in {c["to"] for c in result["summary"]["leadChanges"]}
+    lec = next(d for d in result["drivers"] if d["driver"] == "LEC")
+    assert lec["positions"][19] is None
+    assert lec["gapsToLeaderSec"][19] is None
+
+
+@pytest.mark.asyncio
 async def test_position_changes_driver_filter_and_compact_mode():
     with _session():
         result = await get_position_changes(
@@ -231,6 +249,25 @@ async def test_tyre_degradation_recovers_known_rates():
             s["degSecPerLap"] - rf.FUEL, abs=0.01
         )
     assert len(result["summary"]["compoundCrossovers"]) == 3
+    _strict(result)
+
+
+@pytest.mark.asyncio
+async def test_tyre_crossover_not_extrapolated_past_observed_tyre_ages():
+    # Regression (real 2026 China data): a crossover at tyre age 95 was
+    # reported for a 56-lap race.
+    session = rf.make_race_session()
+    laps = session.laps
+    soft = laps["Compound"] == "SOFT"
+    laps.loc[soft, "LapTime"] = laps.loc[soft, "LapTime"] - pd.Timedelta(seconds=4)
+    with _session(session):
+        result = await get_tyre_degradation(2024, "Test")
+    by_pair = {
+        (c["faster"], c["slower"]): c for c in result["summary"]["compoundCrossovers"]
+    }
+    capped = by_pair[("SOFT", "MEDIUM")]
+    assert capped["crossoverTyreAge"] is None
+    assert "stays faster" in capped["note"]
     _strict(result)
 
 

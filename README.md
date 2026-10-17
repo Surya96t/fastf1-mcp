@@ -171,7 +171,7 @@ config, so files land in the user's project directory by default.
 | `get_speed_trap_data` | Get speed trap and top-speed data for all drivers in a session. |
 | `get_sector_times` | Get best sector times and theoretical best lap for each driver. |
 | `get_corner_analysis` | Corner-by-corner apex/entry/exit speed, gear and brake point for one lap; with a second driver, where each gains or loses time. |
-| `get_drs_zones` | DRS zones (open/close distance, length, surrounding corners) inferred from where the flap actually opened on the fastest laps. 2018–2025 (DRS was replaced by active aero in 2026). |
+| `get_drs_zones` | DRS zones (open/close distance, length, surrounding corners) inferred from where the flap actually opened (fastest laps, or in races the laps with the most DRS use). 2018–2025 (DRS was replaced by active aero in 2026). |
 
 ### Race Analysis (FastF1 Live Timing — 2018-present)
 

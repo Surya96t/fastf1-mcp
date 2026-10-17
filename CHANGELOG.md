@@ -11,13 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
+
 ### Added
 
 - **Real circuit maps, offline** — `plot_circuit` draws any F1 circuit from bundled outline data ([bacinger/f1-circuits](https://github.com/bacinger/f1-circuits), MIT; 40 circuits incl. every venue used 2018–2026 and the 2026 Madring), by name, Grand Prix, nickname or year + round, or a whole season's calendar as a sheet. The data was validated before bundling: outline lengths match the official figures to within 1.5% for every modern circuit, the direction of racing matches circuit guides (Marina Bay and Paul Ricard are stored reversed in the source and are flipped), and each outline starts on the start/finish line with Turn 1 bending the right way.
 - `plot_track_map` falls back to the stored outline (with a note) when FastF1 telemetry can't be downloaded.
 - **Track map** — `plot_track_map` draws the circuit from FastF1 position data: a lap's racing line coloured by speed or gear with numbered corners, DRS zones and direction of travel, or (`at_lap=N`) every car's position on track as the leader starts lap N with the running order. Uses the official map rotation from the circuit data.
 - **Live championship projection** — `get_championship_projection` gives drivers' and constructors' standings as if the race ended at any lap: baseline from the previous round's official standings (plus same-weekend sprint points), race points from the running order (sprint table for sprints; +1 fastest-lap point for 2019–2024 Grands Prix), official points on the final lap, and optionally the projected championship leader after every lap.
-- **DRS zones** — `get_drs_zones` infers zones from where the DRS flap actually opened on the fastest laps of up to 8 drivers (clustered, with zones straddling the start/finish line merged) and names the surrounding corners. `plot_speed_trace` shades DRS-open sections and the track map highlights the zones.
+- **DRS zones** — `get_drs_zones` infers zones from where the DRS flap actually opened on up to 8 reference laps — the top drivers' fastest laps, or in races the laps with the most DRS use (clustered, with zones straddling the start/finish line merged) and names the surrounding corners. `plot_speed_trace` shades DRS-open sections and the track map highlights the zones.
 - **f1-race-replay bridge** — `get_replay_state` and `watch_replay` read the telemetry stream of a race playing in [f1-race-replay](https://github.com/IAmTomShaw/f1-race-replay): live leaderboard, track status, safety car, weather, race-control messages, and overtakes / pit stops / status changes over a watch window. The client drains the stream continuously (the replay's server would otherwise block its render thread) and handles multi-megabyte messages. New `replay_commentary` prompt; `FASTF1_MCP_REPLAY_STREAM_HOST` / `_PORT` settings.
 
 - **Race control & weather** — `get_race_control_messages` returns the race-control feed plus a session-wide summary: SC / VSC / red-flag periods with start/end laps (from the track-status feed), penalties, investigations (every car involved), and track-limits lap deletions per driver; filter by category, driver or lap range. `get_weather` returns air/track temperature, humidity and wind stats, rain periods mapped to laps, and an interval-sampled series.
@@ -32,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Failed FastF1 downloads crashed tools and poisoned the cache** — FastF1's `Session.load()` only logs download failures, so an unreachable live-timing API (or a session whose data isn't published yet) surfaced later as a raw `DataNotLoadedError` from every session tool, and the half-loaded session stayed cached. The session manager now verifies that results/laps/telemetry actually loaded (a failed results download leaves an empty table, which made `get_session_results` silently return `[]`), never caches a failed load, and tools return a `data_unavailable` error explaining the likely cause.
 - FastF1 warnings were logged twice (FastF1's own handler plus ours).
+- Found by running the new tools against real recorded sessions (FastF1's frozen live-timing test data: 2020 Monza, 2021 Jeddah, 2022 Bahrain, 2025 Silverstone, 2026 Shanghai):
+  - `get_drs_zones` / `plot_track_map` found no DRS zones in races whose fastest laps were set in clean air (2022 Bahrain). In races they now use the laps with the most DRS use as references (3/3 zones for Bahrain 2022 and Jeddah 2021).
+  - `get_position_changes` counted a car that stopped on track during a red-flagged lap as leading that lap (Pérez, Jeddah 2021). Laps FastF1 leaves unclassified no longer count for the lead or gaps.
+  - `get_tyre_degradation` extrapolated compound crossovers beyond any tyre age actually run (tyre age 95 in a 56-lap race). Such crossovers are now `null` with a `note`.
 - Review fixes (CodeRabbit on #8): stored calendars now list one entry per championship round (2020 repeat venues, 2021 Styrian GP, cancelled 2023 Imola; 2026 Bahrain/Saudi cancellations and the Bahrain GP at Sepang), so round-number lookups resolve the right circuit; `watch_replay` reports every position change seen (plus `netPositionChanges`), keeps only the first/last messages in memory, ends early with `stalled` when the stream goes quiet, and rejects non-object messages; driver-list parameters accept comma-separated strings through MCP; `get_championship_projection` handles sessions without laps; the race-control driver filter ignores case and whitespace.
 
 - **`compare_telemetry` docs had the `timeDelta` sign backwards** — it said positive = driver1 ahead, but the value is driver1 − driver2 elapsed time, so negative = driver1 ahead (consistent with `lapTimeDeltaSec` and sector `deltaSec`). Values are unchanged; the docstring now matches them.
@@ -50,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- 253 tests passing (up from 68). New synthetic race fixture with known ground truth (degradation rates, SC window, pit laps, apex speeds) so the analysis tools are checked for *recovering* the right answers; chart tools are exercised end-to-end through an MCP client (PNG content, captions, `save_path`, input validation); error dicts are validated against each tool's advertised output schema. The replay bridge is tested against a local TCP server speaking the f1-race-replay protocol (including ~3 MB messages) and was also checked against f1-race-replay's own `TelemetryStreamServer`.
+- 258 tests passing (up from 68). New synthetic race fixture with known ground truth (degradation rates, SC window, pit laps, apex speeds) so the analysis tools are checked for *recovering* the right answers; chart tools are exercised end-to-end through an MCP client (PNG content, captions, `save_path`, input validation); error dicts are validated against each tool's advertised output schema. The replay bridge is tested against a local TCP server speaking the f1-race-replay protocol (including ~3 MB messages) and was also checked against f1-race-replay's own `TelemetryStreamServer`.
 
 ---
 
@@ -150,7 +156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Desktop and VS Code Copilot configuration support
 - 20 unit and integration tests, 0 warnings
 
-[Unreleased]: https://github.com/Surya96t/fastf1-mcp/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Surya96t/fastf1-mcp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Surya96t/fastf1-mcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Surya96t/fastf1-mcp/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Surya96t/fastf1-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Surya96t/fastf1-mcp/releases/tag/v0.1.0
