@@ -23,6 +23,27 @@ An [MCP](https://modelcontextprotocol.io) server that exposes Formula 1 data to 
 
 ---
 
+## Gallery
+
+These are unedited PNGs from the server's chart tools, the same images Claude shows inline, drawn from real F1 timing data via FastF1. Under each one is a question that brings it up and the tool it calls.
+
+<table>
+<tr>
+<td width="50%"><img src="https://raw.githubusercontent.com/Surya96t/fastf1-mcp/main/docs/images/track-map-speed.png" alt="Monza track map coloured by speed, with numbered corners and DRS zones"><br><em>"Show Gasly's fastest lap at Monza 2020, coloured by speed."</em> &nbsp;<code>plot_track_map</code></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/Surya96t/fastf1-mcp/main/docs/images/track-map-positions.png" alt="Bahrain 2022 car positions on track at the start of lap 20"><br><em>"Where was everyone on track when lap 20 of Bahrain 2022 began?"</em> &nbsp;<code>plot_track_map(at_lap=20)</code></td>
+</tr>
+<tr>
+<td><img src="https://raw.githubusercontent.com/Surya96t/fastf1-mcp/main/docs/images/position-chart.png" alt="2025 British GP position chart highlighting Norris, Piastri and Hülkenberg"><br><em>"How did Hülkenberg get from P19 to the podium at Silverstone?"</em> &nbsp;<code>plot_position_chart</code></td>
+<td><img src="https://raw.githubusercontent.com/Surya96t/fastf1-mcp/main/docs/images/speed-trace.png" alt="Hamilton vs Verstappen speed trace and gap, 2021 Saudi Arabian GP"><br><em>"Compare Hamilton's and Verstappen's fastest laps in Jeddah 2021."</em> &nbsp;<code>plot_speed_trace</code></td>
+</tr>
+<tr>
+<td><img src="https://raw.githubusercontent.com/Surya96t/fastf1-mcp/main/docs/images/tyre-strategy.png" alt="2026 Chinese GP tyre strategy by driver"><br><em>"What tyre strategies did teams run in China this year?"</em> &nbsp;<code>plot_tyre_strategy</code></td>
+<td><img src="https://raw.githubusercontent.com/Surya96t/fastf1-mcp/main/docs/images/circuits-2026.png" alt="All 23 circuits on the 2026 F1 calendar"><br><em>"Draw every circuit on the 2026 calendar."</em> Works offline. &nbsp;<code>plot_circuit(year=2026)</code></td>
+</tr>
+</table>
+
+---
+
 ## Quick start
 
 No clone needed — [uv](https://docs.astral.sh/uv/) runs the published package.
