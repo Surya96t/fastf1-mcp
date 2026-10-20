@@ -47,6 +47,10 @@ version-file = "src/fastf1_mcp/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/fastf1_mcp"]
 
+[tool.hatch.build.targets.sdist]
+# README gallery images are served from GitHub; keep them out of the sdist.
+exclude = ["docs/images"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
